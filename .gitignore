@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+node_modules/
+tmp/
+*.log
+configs.json
+accounts.json
+regions_fanti.json
+apk_work/
+tools/
+www/sortable-1.15.7.module.js

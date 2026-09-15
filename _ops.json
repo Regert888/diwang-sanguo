@@ -1,0 +1,692 @@
+{
+ "25618": [
+  "REQ_GGZJ_CONFIRM",
+  "a",
+  "d4"
+ ],
+ "25617": [
+  "REQ_GGZJ_GO",
+  "a",
+  "d4"
+ ],
+ "8305": [
+  "REQ_GGZJ_CANCLE",
+  "a",
+  "d4"
+ ],
+ "25607": [
+  "REQ_SHUAIFU_ADD_SP",
+  "a",
+  "f"
+ ],
+ "6435": [
+  "reqShiftServerAbleBatch",
+  "a",
+  "f4"
+ ],
+ "4629": [
+  "reqLoadGenerals",
+  "a",
+  "f6"
+ ],
+ "6437": [
+  "reqShiftServerCommitBatch",
+  "a",
+  "g6"
+ ],
+ "25605": [
+  "REQ_SHUAIFU_SET_SHUAI",
+  "a",
+  "h"
+ ],
+ "25348": [
+  "ReqOfficeListRefresh",
+  "a",
+  "n"
+ ],
+ "25442": [
+  "REQ_HOUSE_REWARD",
+  "a",
+  "n6"
+ ],
+ "25352": [
+  "officerRename",
+  "a",
+  "v6"
+ ],
+ "25394": [
+  "ReqChallengeTaskAward",
+  "a",
+  "y5"
+ ],
+ "4131": [
+  "acitvitybanyou",
+  "a",
+  "G4"
+ ],
+ "25216": [
+  "REQ_GENERAL_EQUIP_LIANHUN",
+  "a",
+  "I4"
+ ],
+ "25411": [
+  "Req_libutaskAward",
+  "a",
+  "x"
+ ],
+ "25384": [
+  "REQ_HUBU_PLANT_BAT",
+  "a",
+  "y4"
+ ],
+ "12560": [
+  "REQ_HD_LIVEPACKET",
+  "PageMain",
+  "runLivePacket"
+ ],
+ "4107": [
+  "data",
+  "a0",
+  "D0"
+ ],
+ "4100": [
+  "gameLogin",
+  "a0",
+  "Q"
+ ],
+ "4101": [
+  "data",
+  "a0",
+  "d0"
+ ],
+ "4132": [
+  "reqFCMVerify",
+  "a0",
+  "f0"
+ ],
+ "4099": [
+  "loginBaseinfo",
+  "b0",
+  "N0"
+ ],
+ "5632": [
+  "reqArmyAction",
+  "c",
+  "H"
+ ],
+ "5634": [
+  "REQ_FILTERARMY",
+  "c",
+  "b"
+ ],
+ "4434": [
+  "reqExchange",
+  "g0",
+  "g"
+ ],
+ "6408": [
+  "reqHurdleSelect",
+  "g",
+  "W"
+ ],
+ "6424": [
+  "ReqInDiaNaDrenation",
+  "g",
+  "a"
+ ],
+ "25136": [
+  "CSLIST",
+  "h0",
+  "J"
+ ],
+ "25140": [
+  "CSSendNewMail",
+  "h0",
+  "b"
+ ],
+ "25143": [
+  "CSSOLVEANDPRAISE",
+  "h0",
+  "c"
+ ],
+ "4374": [
+  "reqDelMsg",
+  "h0",
+  "c0"
+ ],
+ "25138": [
+  "CSFAQLIST",
+  "h0",
+  "h"
+ ],
+ "4376": [
+  "reqSendMsg",
+  "h0",
+  "h0"
+ ],
+ "4484": [
+  "reqAchievementCont",
+  "i0",
+  "n"
+ ],
+ "4370": [
+  "getSendMSGData",
+  "i",
+  "F"
+ ],
+ "4898": [
+  "reqCityTraitInfo",
+  "k0",
+  "O"
+ ],
+ "4418": [
+  "reqRoleStatusSet",
+  "k0",
+  "V"
+ ],
+ "4355": [
+  "reqUseItem",
+  "k0",
+  "X"
+ ],
+ "5494": [
+  "reqGiveUpResource",
+  "k0",
+  "k0"
+ ],
+ "4424": [
+  "reqRoleRename",
+  "k0",
+  "l0"
+ ],
+ "4902": [
+  "reqCityResetTax",
+  "k",
+  "P0"
+ ],
+ "4872": [
+  "reqModifyNotice",
+  "k",
+  "a1"
+ ],
+ "4868": [
+  "reqCityGarrisonList",
+  "k",
+  "c1"
+ ],
+ "4875": [
+  "reqApplyFief",
+  "k",
+  "i1"
+ ],
+ "4864": [
+  "reqCityFiefList",
+  "k",
+  "x0"
+ ],
+ "4882": [
+  "reqCityForceExpel",
+  "k",
+  "z0"
+ ],
+ "4406": [
+  "reqActivityTask",
+  "m0",
+  "B"
+ ],
+ "4402": [
+  "reqTaskInfo",
+  "m0",
+  "v"
+ ],
+ "5167": [
+  "reqCountryAbdicate",
+  "n",
+  "F2"
+ ],
+ "5166": [
+  "reqCountryMilitary",
+  "n",
+  "G1"
+ ],
+ "5200": [
+  "reqCountryCreateMemCtrl",
+  "n",
+  "H2"
+ ],
+ "5204": [
+  "reqCountryCreateUseItemConverArmy",
+  "n",
+  "J2"
+ ],
+ "5134": [
+  "reqCountryNoticeModify",
+  "n",
+  "K1"
+ ],
+ "5206": [
+  "REQ_COUNTRY_CORPS_RENAME",
+  "n",
+  "K2"
+ ],
+ "5154": [
+  "reqCountryApplyResource",
+  "n",
+  "N2"
+ ],
+ "5152": [
+  "reqCountryGetSubsidy",
+  "n",
+  "P2"
+ ],
+ "5130": [
+  "reqCountryDonateIntegral",
+  "n",
+  "Q2"
+ ],
+ "5128": [
+  "reqPointAdd",
+  "n",
+  "Q2"
+ ],
+ "5205": [
+  "REQ_COUNTRY_RENAME",
+  "n",
+  "Y1"
+ ],
+ "5156": [
+  "reqCountryAlliance",
+  "n",
+  "t2"
+ ],
+ "5170": [
+  "reqCountryCorpCreate",
+  "n",
+  "w2"
+ ],
+ "5182": [
+  "reqCountryCorpNoticeModify",
+  "n",
+  "w2"
+ ],
+ "5132": [
+  "REQ_COUNTRY_DONATE_RESOUTCE",
+  "n",
+  "x1"
+ ],
+ "5184": [
+  "reqCreateCountry",
+  "n",
+  "y2"
+ ],
+ "5410": [
+  "expedition",
+  "p",
+  "N"
+ ],
+ "5408": [
+  "expeditionPreTipInfo",
+  "p",
+  "O"
+ ],
+ "5419": [
+  "reqDetect",
+  "p",
+  "Q0"
+ ],
+ "5414": [
+  "forceRecall",
+  "p",
+  "U"
+ ],
+ "5378": [
+  "ReqExpeditionAttCityList",
+  "p",
+  "b0"
+ ],
+ "5394": [
+  "ReqAddFavoriteSpace",
+  "p",
+  "d"
+ ],
+ "5472": [
+  "reqEnemyCountryCityList",
+  "p",
+  "g0"
+ ],
+ "5474": [
+  "reqRoleFiefList",
+  "p",
+  "g0"
+ ],
+ "4352": [
+  "reqItemMallGoods",
+  "q",
+  "C1"
+ ],
+ "4354": [
+  "buyMallGood",
+  "q",
+  "C1"
+ ],
+ "4655": [
+  "fiefForceExpel",
+  "q",
+  "F1"
+ ],
+ "4680": [
+  "soldierAverageRecuit",
+  "q",
+  "O1"
+ ],
+ "4674": [
+  "soldierRecruitCancle",
+  "q",
+  "S1"
+ ],
+ "4612": [
+  "fiefItemUse",
+  "q",
+  "T"
+ ],
+ "4624": [
+  "fiefMoveAbleCitys",
+  "q",
+  "V"
+ ],
+ "25170": [
+  "reqEmplyCtrl",
+  "q",
+  "f1"
+ ],
+ "25168": [
+  "reqEmplyInfo",
+  "q",
+  "g1"
+ ],
+ "4678": [
+  "reqFiefInfo",
+  "q",
+  "h1"
+ ],
+ "4657": [
+  "reqHurtSoldierCurePreInfo",
+  "q",
+  "l1"
+ ],
+ "4659": [
+  "reqPrisonerCtrlInfo",
+  "q",
+  "o1"
+ ],
+ "4651": [
+  "generalWithSoldier",
+  "q",
+  "z1"
+ ],
+ "25425": [
+  "REQ_BINGBU_REFRESH",
+  "r",
+  "A4"
+ ],
+ "6434": [
+  "di_联网数据请求",
+  "r",
+  "A5"
+ ],
+ "6436": [
+  "reqShiftserverCommit",
+  "r",
+  "A5"
+ ],
+ "4426": [
+  "reqReplaceSkin",
+  "r",
+  "H5"
+ ],
+ "25344": [
+  "ReqInternalInfo",
+  "r",
+  "R"
+ ],
+ "4408": [
+  "reqGainAwardRecord",
+  "r",
+  "d3"
+ ],
+ "25211": [
+  "REQ_XUNBAO_ITEMUSE",
+  "r",
+  "e6"
+ ],
+ "6440": [
+  "cancelShiftServer",
+  "r",
+  "o0"
+ ],
+ "25380": [
+  "REQ_HUBU_PLANT_PICK",
+  "r",
+  "x4"
+ ],
+ "4498": [
+  "reqForceMapCity",
+  "s0",
+  "W"
+ ],
+ "5895": [
+  "REQ_FIGHTINFO",
+  "t",
+  "c0"
+ ],
+ "5892": [
+  "reqSelectAttAim",
+  "t",
+  "n0"
+ ],
+ "4880": [
+  "reqRoleFiefList",
+  "x",
+  "o0"
+ ],
+ "6150": [
+  "reqClanBrotherBattleReportList",
+  "x",
+  "w"
+ ],
+ "6450": [
+  "reqFBGroups",
+  "y",
+  "A"
+ ],
+ "6459": [
+  "reqFBStart",
+  "y",
+  "D"
+ ],
+ "6454": [
+  "reqFBTeamDetail",
+  "y",
+  "F"
+ ],
+ "6452": [
+  "reqFBJoinTeam",
+  "y",
+  "X"
+ ],
+ "6460": [
+  "reqFBRecords",
+  "y",
+  "n"
+ ],
+ "4722": [
+  "reqFamousSearch",
+  "z",
+  "A0"
+ ],
+ "4650": [
+  "reqGeneralUseItem",
+  "z",
+  "O0"
+ ],
+ "4646": [
+  "generalWithSoldier",
+  "z",
+  "R"
+ ],
+ "4645": [
+  "reqGeneralPracticeCancel",
+  "z",
+  "U0"
+ ],
+ "4644": [
+  "generalAddPoint",
+  "z",
+  "U0"
+ ],
+ "4684": [
+  "generalAddPoint",
+  "z",
+  "U0"
+ ],
+ "4628": [
+  "generalRename",
+  "z",
+  "Z0"
+ ],
+ "4706": [
+  "reqGeneralSkillCtrl",
+  "z",
+  "e1"
+ ],
+ "4726": [
+  "reqFamousDetail",
+  "z",
+  "y0"
+ ],
+ "25088": [
+  "houyedu",
+  "a",
+  "e"
+ ],
+ "25090": [
+  "qiandao",
+  "a",
+  "j"
+ ],
+ "25186": [
+  "ArenaTopListMsg",
+  "b",
+  "K"
+ ],
+ "25200": [
+  "ArenaTeamStrategy",
+  "b",
+  "K"
+ ],
+ "25198": [
+  "ArenaBattle",
+  "b",
+  "l"
+ ],
+ "25194": [
+  "ArenaGenChange",
+  "b",
+  "m"
+ ],
+ "25188": [
+  "ArenaShopMsg",
+  "b",
+  "o"
+ ],
+ "25192": [
+  "ArenaSolidInfo",
+  "b",
+  "p"
+ ],
+ "6433": [
+  "reqShiftServerPreview",
+  "f",
+  "o"
+ ],
+ "24587": [
+  "buyMallGood",
+  "i",
+  "t"
+ ],
+ "4423": [
+  "REQ_GOLD_INFO",
+  "i",
+  "u"
+ ],
+ "12585": [
+  "reqSetNewhandGuideInfo",
+  "j",
+  "A"
+ ],
+ "12674": [
+  "reqAchievementCont",
+  "k",
+  "A"
+ ],
+ "12672": [
+  "reqAchievementList",
+  "k",
+  "B"
+ ],
+ "12675": [
+  "reqNicknameList",
+  "k",
+  "G"
+ ],
+ "25222": [
+  "reqAutoHitbanditSet",
+  "m",
+  "K"
+ ],
+ "25120": [
+  "vipmaininfo",
+  "m",
+  "m"
+ ],
+ "25610": [
+  "REQ_SHUAIFU_GAIN_ZHANFA_BOOKS",
+  "a",
+  "J0"
+ ],
+ "25601": [
+  "REQ_SHUAIFU_ACTIVATE_ZHANFA",
+  "a",
+  "L0"
+ ],
+ "25602": [
+  "REQ_SHUAIFU_STUDY_ZHANFA",
+  "a",
+  "L0"
+ ],
+ "25603": [
+  "REQ_SHUAIFU_UPGRADE_ZHANFA",
+  "a",
+  "L0"
+ ],
+ "25604": [
+  "REQ_SHUAIFU_DISASSEMBLE_ZHANFA",
+  "a",
+  "L0"
+ ],
+ "24579": [
+  "itemlistnews",
+  "a",
+  "N0"
+ ],
+ "25609": [
+  "REQ_SHUAIFU_ADD_EXP_MAX",
+  "a",
+  "a"
+ ],
+ "25202": [
+  "reqShareHD",
+  "e",
+  "d"
+ ]
+}

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <meta name="format-detection" content="telephone=no" />
+    <title>帝王三国辅助</title>
+    <link rel="icon" type="image/png" href="fysg-logo.png" />
+    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <link rel="modulepreload" crossorigin href="assets/vue-vendor-CePlFyiN.js">
+    <link rel="modulepreload" crossorigin href="assets/element-plus-hs3wquP0.js">
+    <link rel="stylesheet" crossorigin href="assets/index-v7F85y_l.css">
+    <link rel="stylesheet" href="assets/raw-theme.css">
+  </head>
+  <body>
+    <div id="app">
+      <div id="raw-boot-fallback" style="display:none;padding:48px 20px;color:#6b7280;text-align:center;font-size:15px"></div>
+    </div>
+    <script>
+      // ====== 跳过登录，直接预置会话 ======
+      var TOKEN = "diytoken_" + Date.now();
+      var USER = {
+        id: 1, userId: 1, phone: "test", username: "test", nickname: "测试账号",
+        role: "USER", isAdmin: false, isAgent: false,
+        coin: 99999, coinBalance: 99999,
+        vipStatus: "ACTIVE", expireAt: "2027-12-31", expireTime: "2027-12-31",
+        vipExpiresAt: "2027-12-31",
+        maxAccounts: 10, maxSlots: 10, maxConcurrentAccounts: 5,
+        expired: false, isTrial: false,
+        email: "", emailBound: false, emailVerifiedAt: "",
+        verifiedPhone: "test", maskedPhone: "te****st", phoneBound: true,
+        phoneVerifiedAt: "2026-01-01",
+        permissions: {
+          admin: true, agent: true,
+          linked_escort: true, linked_country_change: true,
+          linked_fief_setup: true, linked_server_transfer: true,
+          fief_setup: true, apprentice: true, city_transfer: true,
+          batch_server_transfer: true, batch_country_change: true,
+          recruit_soldiers: true, batch_import: true, world_shout: true,
+          fief_repair: true, batch_fief_repair: true,
+          recruit_generals: true, auto_switch_roles: true
+        },
+        gameAccounts: [
+          { id:1, userId:1, gameVersion:"fanti_dwsg", gameUsername:"测试号A",
+            serverName:"328區豪情逸致", serverKey:"hk_328",
+            characterIndex:1, characterName:"測試君主",
+            linkedRoleCount:3, linkRoleCount:3, sameServerRoleCount:0,
+            remark:"主号", status:1, lastError:"",
+            lastAccessTime:"2026-09-14", createdAt:"2026-09-01", updatedAt:"2026-09-14" }
+        ],
+        unreadAnnouncements: [
+          { id:"notice-1", title:"欢迎使用", content:"帝王三国辅助已就绪", publishDate:"2026-09-14", enabled:true, showMode:1 }
+        ]
+      };
+      localStorage.setItem("token", TOKEN);
+      localStorage.setItem("rawUserInfo", JSON.stringify(USER));
+      localStorage.setItem("agentInfo", JSON.stringify({role:"ADMIN", username:"test", nickname:"测试账号"}));
+
+      // ====== 启动错误处理 ======
+      (function () {
+        var failed = false;
+        function showBootError(text) {
+          if (failed) return;
+          failed = true;
+          var el = document.getElementById("raw-boot-fallback");
+          if (el) { el.style.display = "block"; el.textContent = text || "页面加载失败，请刷新页面"; }
+        }
+        window.addEventListener("error", function (event) {
+          var target = event && event.target;
+          var tag = target && target.tagName;
+          if (tag === "SCRIPT" || tag === "LINK") showBootError("资源加载失败，请刷新页面");
+        }, true);
+        window.addEventListener("unhandledrejection", function () {
+          showBootError("页面加载失败，请刷新页面");
+        });
+        setTimeout(function () {
+          var el = document.getElementById("raw-boot-fallback");
+          if (el && el.parentNode) showBootError("页面加载较慢，请刷新页面");
+        }, 8000);
+      })();
+    </script>
+    <script nomodule>
+      var el = document.getElementById("raw-boot-fallback");
+      if (el) { el.style.display = "block"; el.textContent = "浏览器版本过低，请换浏览器打开"; }
+    </script>
+    <!-- Vue 应用入口 -->
+    <script type="module" crossorigin src="assets/index-CGH8oqf2-loginfix8.js"></script>
+  </body>
+</html>
