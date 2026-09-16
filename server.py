@@ -10,10 +10,9 @@ WWW = os.path.join(BASE, "www")
 ASSETS = os.path.join(BASE, "assets")
 sys.path.insert(0, BASE)
 from core.king_client import (
-    KingClient, 取区服列表, 匹配区服, 会话探活, 进入游戏,
-    解析登录信息, 解析国家, 解析角色资源, 解析登录包武将,
-    解析登录包完整, 解析武将列表, 解析宝藏,
-    解析伤兵, 刷新伤兵, 治疗伤兵
+    取区服列表, 匹配区服, 进入游戏,
+    解析武将列表, 解析宝藏,
+    刷新伤兵, 治疗伤兵
 )
 
 # ====== 区服列表缓存 ======
@@ -423,17 +422,84 @@ class BotSession:
             pass
 
 
+    def _山贼锚点序列(self, cx, cy):
+        """生成 6×6 锚点坐标，从中心向外一圈圈铺开。
+
+        ★ 真机抓包（刷新山贼.har）实证：op 5440 载荷 (0,x,y) 里的 x,y 是
+          【地图坐标】不是页码，锚点步长 = 6（每个锚点覆盖 [x,x+5]×[y,y+5]）。
+          抓到的真机序列：(123,30)→(117,30)→(117,36)→(123,36)，x/y 差值都是 6。
+        """
+        STEP = 6
+        w = int(getattr(self.client, "map_w", 0) or 0) or 187
+        h = int(getattr(self.client, "map_h", 0) or 0) or 56
+        if cx <= 0 or cy <= 0:          # 未配置中心 → 从地图中心开始
+            cx, cy = w // 2, h // 2
+        pts = []
+        for r in range(max(w, h) // STEP + 2):
+            if r == 0:
+                ring = [(0, 0)]
+            else:                        # 第 r 圈（切比雪夫环）
+                ring = [(d, -r) for d in range(-r, r + 1)]
+                ring += [(d, r) for d in range(-r, r + 1)]
+                ring += [(-r, d) for d in range(-r + 1, r)]
+                ring += [(r, d) for d in range(-r + 1, r)]
+            for dx, dy in ring:
+                x, y = cx + dx * STEP, cy + dy * STEP
+                if 0 <= x < w and 0 <= y < h:
+                    pts.append((x, y))
+        return pts
+
+    def _翻页找山贼(self, lv, 已打, 已打坐标, cx, cy, 最多翻页=15):
+        """刷新山贼：一次翻一页（一个锚点＝一个 5440 包），
+        命中符合等级的就【立刻返回】，没有就翻下一页。
+
+        这样出征紧跟在刷新之后发出，山贼 ID 还是新鲜的 —— 旧实现先扫全图
+        （120 包/请求 × 很多轮，拿到 8 万个山贼）再出征，ID 早就失效了，
+        服务端回 code=-28。
+
+        游标 _sh_i 跨轮持久化，避免每次都从同一片区域重新翻。
+        """
+        from core.king_client import 扫描山贼
+        pts = getattr(self, "_sh_pts", None)
+        if not pts:
+            pts = self._山贼锚点序列(cx, cy)
+            self._sh_pts = pts
+        if not pts:
+            return None, 0
+        i0 = getattr(self, "_sh_i", 0)
+        翻过 = 0
+        for k in range(min(最多翻页, len(pts))):
+            i = (i0 + k) % len(pts)
+            x, y = pts[i]
+            翻过 = k + 1
+            try:
+                fs = 扫描山贼(self.client, [(x, y)])    # ★ 一个请求只发一个包
+            except Exception:
+                continue
+            for t in fs.values():
+                if t.get("lvl") not in lv:
+                    continue
+                if t["id"] in 已打 or (t["x"], t["y"]) in 已打坐标:
+                    continue
+                self._sh_i = (i + 1) % len(pts)
+                self.log("[刷黄] 翻第%d页 锚点(%d,%d) → 命中 %s Lv%s 坐标(%d,%d)" % (
+                    翻过, x, y, t.get("name"), t.get("lvl"), t["x"], t["y"]))
+                return t, 翻过
+        self._sh_i = (i0 + 翻过) % len(pts)
+        return None, 翻过
+
     def _刷黄(self):
-        """刷黄：★ 分页协议拉全部山贼 → 按配置过滤 → 中心就近 → 复核 → 派空闲编队
-        关键认知（实测确认）：
-          · op5440 的载荷 (x,y) 是【分页参数】：x=页内序号0~4, y=页行号
-          · 每页固定 8 个山贼，返回的坐标才是真实地图坐标
-          · 所以复核必须"重新拉列表比对 id"，绝不能用山贼坐标去当查询参数
+        """刷黄：刷新一页山贼 → 有符合等级的就出征 → 没有就翻下一页。
+
+        ★ 真机抓包（刷新山贼.har）修正的认知：
+          · op5440 一个请求只发【一个】包，载荷 (0,x,y) 的 x,y 是【地图坐标】
+          · 每个锚点覆盖 6×6 区域，锚点步长 = 6
+          · 旧代码把 (x,y) 当分页参数批量发 120 包扫全图，拿到 8 万个山贼后
+            再出征，此时 ID 已失效 → 服务端回 code=-28
         """
         import time as _t
-        from collections import Counter
         try:
-            from core.king_client import 出征打山贼, 拉全部山贼, 解析山贼响应
+            from core.king_client import 出征打山贼
             now = _t.time()
             if now - getattr(self, "_sh_last", 0) < 15:
                 return
@@ -480,53 +546,23 @@ class BotSession:
                 self.log("[刷黄] 编队未就绪（%s），等待返回" % "/".join(全忙原因 or ["未知"]))
                 return
 
-            # ---- 3) ★ 分页协议拉全部山贼
-            fs = 拉全部山贼(self.client)
-            if not fs:
-                self.log("[刷黄] 山贼列表为空（本区可能无山贼）")
-                return
-            分布 = dict(sorted(Counter(t.get("lvl") for t in fs.values()).items()))
-
-            # ---- 4) 等级过滤 + 去重已打
+            # ---- 3+4+5) ★ 刷新一页 → 有符合的就出征，没有就翻下一页
             已打 = {k: v for k, v in getattr(self, "_sh_done", {}).items() if now - v < 900}
             self._sh_done = 已打
-            ms = [t for t in fs.values() if t.get("lvl") in lv and t["id"] not in 已打]
-            if not ms:
-                self.log("[刷黄] 全图%d个山贼 等级%s | 配置等级%s → 无可打（已打%d）" % (
-                    len(fs), 分布, sorted(lv), len(已打)))
-                return
-
-            # ---- 5) 就近排序（中心坐标优先）；(0,0)=全图随机
-            if cx <= 0 and cy <= 0:
-                import random
-                random.shuffle(ms)
-                说明 = "全图随机"
-            else:
-                ms.sort(key=lambda t: (t["x"] - cx) ** 2 + (t["y"] - cy) ** 2)
-                说明 = "中心(%d,%d)就近" % (cx, cy)
-            self.log("[刷黄] 全图%d个山贼 等级%s | 配置%s → 匹配%d个 | %s" % (
-                len(fs), 分布, sorted(lv), len(ms), 说明))
-            候选 = ms[:20]
-
-            # ---- 6+7+8) 为每个空闲编队选目标并出征
-            已打坐标 = getattr(self, "_sh_xy", {})
-            已打坐标 = {k: v for k, v in 已打坐标.items() if now - v < 900}
+            已打坐标 = {k: v for k, v in getattr(self, "_sh_xy", {}).items() if now - v < 900}
             self._sh_xy = 已打坐标
-            已选idx = set()
+
+            # ---- 6+7+8) 为每个空闲编队翻页找目标并出征
             dispatched = 0
+            总翻页 = 0
             for 可用队 in 可用队列:
-                目标 = None
-                for i, c in enumerate(候选):
-                    if i in 已选idx:
-                        continue
-                    k2 = (c["x"], c["y"])
-                    if k2 in 已打坐标:
-                        continue
-                    目标 = c
-                    已选idx.add(i)
-                    break
+                目标, 用页数 = self._翻页找山贼(lv, 已打, 已打坐标, cx, cy)
+                总翻页 += 用页数
                 if 目标 is None:
-                    continue
+                    self.log("[刷黄] 翻了%d页仍无符合等级%s的山贼（已打%d）" % (
+                        总翻页, sorted(lv), len(已打)))
+                    break
+                已打坐标[(目标["x"], 目标["y"])] = now
                 # 出征
                 for gid in 可用队["generalIds"]:
                     w = 武将表.get(gid, {})
