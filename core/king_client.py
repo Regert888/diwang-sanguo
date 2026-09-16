@@ -352,15 +352,11 @@ def 真机发(client, op, payload):
       但**写操作**（配兵 4646/4649/4656）服务端会【静默忽略】！
       真机抓包证实：写操作的载荷是【明文】、长度字段 = 载荷长-2、【没有签名】。
       按真机格式发，配兵立即生效（已实测：呂時亮 0→2→0）。
+
+    ★ 现已收敛到 KingClient.send_ops —— 两者字节完全一致，
+      由 tools/test_transport_equiv.py 断言保证。
     """
-    body = _wutf("%s`%s`%s" % (client.c_version, client.c_type, client.channel_id))
-    body += _wlong(int(time.time() * 1000)) + _wbyte(1)
-    body += _wlong(client.play_id) + _wlong(0)
-    body += _wshort(len(payload) - 2) + _wshort(op) + payload
-    req = urllib.request.Request(client.game_url, data=body, method="POST")
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    with urllib.request.urlopen(req, timeout=25) as r:
-        return client._parse_resp(r.read())
+    return client.send_ops([(op, payload)])
 
 
 def 组装配兵包(武将ID, 兵种seq, 数量):
@@ -457,19 +453,14 @@ def 解析山贼响应(data):
 
 
 def 扫描山贼(client, 坐标列表, batch_size=120):
-    """批量扫描山贼（op 5440）。返回 {id: 山贼字典}。"""
+    """批量扫描山贼（op 5440）。返回 {id: 山贼字典}。
+
+    ★ 实测上限 120 个/请求（130 个被服务端拒绝）。
+    """
     found = {}
     for i in range(0, len(坐标列表), batch_size):
         chunk = 坐标列表[i:i + batch_size]
-        body = _wutf("%s`%s`%s" % (client.c_version, client.c_type, client.channel_id))
-        body += _wlong(int(time.time() * 1000)) + _wbyte(len(chunk))
-        for (x, y) in chunk:
-            pl = struct.pack(">hhh", 0, x, y)
-            body += _wlong(client.play_id) + _wlong(0) + _wshort(len(pl) - 2) + _wshort(5440) + pl
-        import urllib.request
-        req = urllib.request.Request(client.game_url, data=body, method="POST")
-        req.add_header("Content-Type", "application/x-www-form-urlencoded")
-        pk = client._parse_resp(urllib.request.urlopen(req, timeout=25).read())
+        pk = client.send_ops([(5440, struct.pack(">hhh", 0, x, y)) for (x, y) in chunk])
         for q in pk:
             if q["op"] != 34112:
                 continue
@@ -485,14 +476,13 @@ def 扫描山贼(client, 坐标列表, batch_size=120):
 
 
 def _发_pkt(client, op, payload, batch=1):
-    """真机格式发单个包"""
-    body = _wutf("%s`%s`%s" % (client.c_version, client.c_type, client.channel_id))
-    body += _wlong(int(time.time() * 1000)) + _wbyte(batch)
-    body += _wlong(client.play_id) + _wlong(0) + _wshort(len(payload) - 2) + _wshort(op) + payload
-    import urllib.request
-    req = urllib.request.Request(client.game_url, data=body, method="POST")
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    return client._parse_resp(urllib.request.urlopen(req, timeout=25).read())
+    """真机格式发单个包。
+
+    ★ 出征 5410 必须走这条路 —— 签名路会被服务端静默忽略（实测确认）。
+      现收敛到 send_ops，字节一致由 tools/test_transport_equiv.py 保证。
+    """
+    assert batch == 1, "batch≠1 已无调用方；批量请直接用 client.send_ops(ops)"
+    return client.send_ops([(op, payload)])
 
 
 def 出征打山贼(client, genIds, thief_id, a_type=3):
@@ -1379,15 +1369,7 @@ def 拉全部山贼(client, batch_size=120):
     y_start = 0
     while True:
         pts = [(x, y_start + r) for r in range(rows_per_batch) for x in range(PAGE_X)]
-        body = _wutf('%s`%s`%s' % (client.c_version, client.c_type, client.channel_id))
-        body += _wlong(int(time.time() * 1000)) + _wbyte(len(pts))
-        for (px, py) in pts:
-            pl = struct.pack('>hhh', 0, px, py)
-            body += _wlong(client.play_id) + _wlong(0) + _wshort(len(pl) - 2) + _wshort(5440) + pl
-        import urllib.request as _u
-        req = _u.Request(client.game_url, data=body, method='POST')
-        req.add_header('Content-Type', 'application/x-www-form-urlencoded')
-        pk = client._parse_resp(_u.urlopen(req, timeout=25).read())
+        pk = client.send_ops([(5440, struct.pack('>hhh', 0, px, py)) for (px, py) in pts])
         before = len(found)
         for q in pk:
             if q['op'] != 34112: continue
