@@ -9,3 +9,9 @@ regions_fanti.json
 apk_work/
 tools/
 www/sortable-1.15.7.module.js
+
+# 逆向素材 / 本地临时脚本（体积大或仅本地调试用）
+*.apk
+test_expedition*.py
+core/king_client_wounded_new.py
+登录到山贼筛选借鉴代码.py

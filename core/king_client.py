@@ -464,7 +464,7 @@ def 扫描山贼(client, 坐标列表, batch_size=120):
         body = _wutf("%s`%s`%s" % (client.c_version, client.c_type, client.channel_id))
         body += _wlong(int(time.time() * 1000)) + _wbyte(len(chunk))
         for (x, y) in chunk:
-            pl = struct.pack(">hhh", x, y, 0)
+            pl = struct.pack(">hhh", 0, x, y)
             body += _wlong(client.play_id) + _wlong(0) + _wshort(len(pl) - 2) + _wshort(5440) + pl
         import urllib.request
         req = urllib.request.Request(client.game_url, data=body, method="POST")
@@ -494,43 +494,34 @@ def _发_pkt(client, op, payload, batch=1):
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
     return client._parse_resp(urllib.request.urlopen(req, timeout=25).read())
 
-def _发_pkt(client, op, payload, batch=1):
-    """真机格式发单个包"""
-    body = _wutf("%s`%s`%s" % (client.c_version, client.c_type, client.channel_id))
-    body += _wlong(int(time.time() * 1000)) + _wbyte(batch)
-    body += _wlong(client.play_id) + _wlong(0) + _wshort(len(payload) - 2) + _wshort(op) + payload
-    import urllib.request
-    req = urllib.request.Request(client.game_url, data=body, method="POST")
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    return client._parse_resp(urllib.request.urlopen(req, timeout=25).read())
 
 def 出征打山贼(client, genIds, thief_id, a_type=3):
-    """op 5410 expedition。格式已从主人真机抓包确认（2026-09-15最新）。
-    必须先调 5408(expeditionPreTipInfo) 再调 5410。
+    """op 5410 expedition。
+
+    ★ 必须用 _发_pkt（带 \\x00\\x00 前缀的真机格式）。
+    send_op_raw 和 send_op 都会被服务端静默忽略（实测确认）。
+
+    5410 载荷: [00 00][byte type=3][byte N][long×N genId][long thiefId][long -1][00 00 00]
+    5408 载荷: [00 00][byte type=3][byte N][long genId][long thiefId]
     """
-    from core.king_client import _wutf, _wlong, _wshort, _wbyte
-    gid = int(genIds[0])
-    # step 1: 5408 expeditionPreTipInfo — 载荷 [00 00][byte A][byte N][long 武将ID][6字节目标id]
-    前置 = b"\x00\x00\x03\x01" + struct.pack(">q", gid) + struct.pack(">Q", thief_id)[2:8]
+    pl = b"\x00\x00" + struct.pack(">BB", a_type, len(genIds))
+    for g in genIds:
+        pl += struct.pack(">q", int(g))
+    pl += struct.pack(">q", int(thief_id))
+    pl += struct.pack(">q", -1)
+    pl += b"\x00\x00\x00"
+    result = _发_pkt(client, 5410, pl)
+
+    # 5408 前置（真机后发）
+    前置 = b"\x00\x00" + struct.pack(">BB", a_type, 1)
+    前置 += struct.pack(">q", int(genIds[0]))
+    前置 += struct.pack(">q", int(thief_id))
     try:
         _发_pkt(client, 5408, 前置)
     except Exception:
         pass
-    # step 2: 5410 expedition —
-    #   载荷 [00 00][byte A=3][byte N=1][long 武将ID][long 目标id][long -1][byte ff]
-    尾 = struct.pack(">q", -1) + bytes([0xff])
-    pl = b"\x00\x00" + struct.pack(">BB", a_type, len(genIds))
-    for g in genIds:
-        pl += struct.pack(">q", int(g))
-    pl += struct.pack(">q", int(thief_id)) + 尾
-    body = _wutf("%s`%s`%s" % (client.c_version, client.c_type, client.channel_id))
-    body += _wlong(int(time.time() * 1000)) + _wbyte(1)
-    body += _wlong(client.play_id) + _wlong(0)
-    body += _wshort(len(pl) - 2) + _wshort(5410) + pl
-    import urllib.request
-    req = urllib.request.Request(client.game_url, data=body, method="POST")
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    return client._parse_resp(urllib.request.urlopen(req, timeout=25).read())
+
+    return result
 
 
 # === Restored from backup ===
@@ -544,34 +535,59 @@ class KingClient:
         self.play_id = 0
 
     def 取角色全部信息(self):
-        "获取角色完整信息"
-        pk = self.send_op(32772, b"")
-        from core.king_client import 解析登录包完整
-        try:
-            for p in pk or []:
-                if p["op"] == 32772:
-                    r = 解析登录包完整(p["data"])
-                    if r and 'generals' in r:
-                        for g in r['generals']:
-                            if g.get('genId'):
-                                g['hp'] = g.get('hp', 0)
-                    return r
-        except: pass
-        return {}
+        """从已缓存的 login_packets 解析角色完整信息。
+        login_packets 来自 game_login()（op 4100 → 响应 op 32772）。
+        国家来自 enter_packets（op 4099 → 响应 op 32771）。
+        """
+        pk = getattr(self, "login_packets", None) or []
+        out = {}
+        for p in pk:
+            if p.get("op") == 32772 and p.get("data"):
+                try:
+                    out = 解析登录包完整(p["data"])
+                except Exception:
+                    pass
+                break
+        # 国家从 enter_game(4099) 响应提取
+        if not out.get("kingdom"):
+            enter_pk = getattr(self, "enter_packets", None) or []
+            out["kingdom"] = 解析国家(enter_pk)
+        # 备用：从 login_packets 中文串扫描
+        if not out.get("kingdom"):
+            info = 解析登录信息(pk)
+            out["kingdom"] = info.get("kingdom", "")
+        return out
 
     def 取角色资源(self):
-        "获取角色资源（铜钱/粮食/人口）op 4128"
+        """获取角色资源（铜钱/粮食/人口）op 4128 → 响应 op 32800
+        结构：8+8+4+4+8+8+8+8 = 56 字节（协议逆向确认）
+        """
         pk = self.send_op(4128, b"")
         for p in pk or []:
-            if p["op"] == 33040 and p.get("data"):
+            if p["op"] == 32800 and p.get("data"):
                 d = p["data"]
+                if len(d) < 56:
+                    continue
                 try:
-                    import struct as _s
                     o = 0
-                    def i32(): nonlocal o; v = _s.unpack_from(">i", d, o)[0]; o += 4; return v
-                    return {"copper": i32(), "food": i32(), "popUsed": i32(), "popMax": i32(),
-                            "yieldCoin": i32(), "yieldFood": i32(), "gold": i32(), "silver": i32()}
-                except: pass
+                    def _rl():
+                        nonlocal o; v = struct.unpack_from(">q", d, o)[0]; o += 8; return v
+                    def _ri():
+                        nonlocal o; v = struct.unpack_from(">i", d, o)[0]; o += 4; return v
+                    copper = _rl()    # 铜钱
+                    food = _rl()      # 粮食
+                    yieldCoin = _ri() # 总产钱
+                    yieldFood = _ri() # 总产粮
+                    popUsed = _rl()   # 人口占用
+                    popMax = _rl()    # 人口上限
+                    gold = _rl()      # 黄金
+                    silver = _rl()    # 白银
+                    return {"copper": copper, "food": food,
+                            "yieldCoin": yieldCoin, "yieldFood": yieldFood,
+                            "popUsed": popUsed, "popMax": popMax,
+                            "gold": gold, "silver": silver}
+                except Exception:
+                    pass
         return {}
 
     def set_server(self, host, port):
@@ -667,7 +683,9 @@ class KingClient:
     def enter_game(self):
         data = _wutf(self.sub_token) + _wutf(self.session) + _wutf(self.channel_id)
         resp = self._game_post([(4099, data)])
-        for p in self._parse_resp(resp):
+        packets = self._parse_resp(resp)
+        self.enter_packets = packets          # ★ 存起来给 解析国家 用
+        for p in packets:
             if p["signed"] == -32765:
                 b = p["data"]
                 code = b[0]
@@ -1345,23 +1363,32 @@ def 进入游戏(user, pwd, host, port, session, sub):
         return None, str(e)
 
 
-def 拉全部山贼(client, 页行数=120, batch_size=120):
-    """拉取本区全部山贼（全图扫描）"""
+def 拉全部山贼(client, batch_size=120):
+    """拉取本区全部山贼（分页协议全图扫描）。
+
+    op 5440 载荷 (short, short, short) = (0, 页内序号x, 页行号y)。
+    x=0~4, y=0,1,2... 每页最多 8 个山贼。
+    按行(y)递增批量请求，直到整批返回 0 个新山贼为止。
+    ★ 旧代码错误地用地图尺寸 (250×62=15500) 当分页边界，导致：
+      · 15500 次请求 → 3 分钟延迟
+      · 同一批山贼重复返回 124000 次（不同 ID）
+    """
     found = {}
-    w = getattr(client, 'map_w', 0) or 187
-    h = getattr(client, 'map_h', 0) or 56
-    pts = [(x, y) for x in range(w) for y in range(h)]
-    for i in range(0, len(pts), batch_size):
-        chunk = pts[i:i + batch_size]
+    PAGE_X = 5
+    rows_per_batch = max(1, batch_size // PAGE_X)
+    y_start = 0
+    while True:
+        pts = [(x, y_start + r) for r in range(rows_per_batch) for x in range(PAGE_X)]
         body = _wutf('%s`%s`%s' % (client.c_version, client.c_type, client.channel_id))
-        body += _wlong(int(time.time() * 1000)) + _wbyte(len(chunk))
-        for (x, y) in chunk:
-            pl = struct.pack('>hhh', x, y, 0)
+        body += _wlong(int(time.time() * 1000)) + _wbyte(len(pts))
+        for (px, py) in pts:
+            pl = struct.pack('>hhh', 0, px, py)
             body += _wlong(client.play_id) + _wlong(0) + _wshort(len(pl) - 2) + _wshort(5440) + pl
         import urllib.request as _u
         req = _u.Request(client.game_url, data=body, method='POST')
         req.add_header('Content-Type', 'application/x-www-form-urlencoded')
         pk = client._parse_resp(_u.urlopen(req, timeout=25).read())
+        before = len(found)
         for q in pk:
             if q['op'] != 34112: continue
             try:
@@ -1369,6 +1396,11 @@ def 拉全部山贼(client, 页行数=120, batch_size=120):
                 if w2 > 0 and h2 > 0: client.map_w, client.map_h = w2, h2
                 for e in lst: found[e['id']] = e
             except Exception: pass
+        if len(found) == before:
+            break
+        y_start += rows_per_batch
+        if y_start > 2000:
+            break
     return found
 
 def 解析角色资源(data):
@@ -1376,46 +1408,373 @@ def 解析角色资源(data):
     return data  # stub for import compatibility
 
 
+# ====== genId 缓存（登录包提取一次，实时包复用）======
+_cached_gen_ids = []       # 按顺序的武将 ID 列表
+
+
 def 解析武将列表(pkt_data):
-    """解析实时包→武将列表。从首次登录包缓存获取genId+完整信息"""
-    if pkt_data and len(pkt_data) > 200:
-        from core.king_client import 解析登录包完整
-        try:
-            r = 解析登录包完整(pkt_data)
-            if r and 'generals' in r:
-                for g in r['generals']:
-                    if 'statusText' not in g:
-                        g['statusText'] = {0:'待命',1:'行军中',8:'返回中'}.get(g.get('Oa',0),'待命')
-                return r['generals']
-        except: pass
-    # 从模块级缓存取
-    cached = getattr(解析武将列表, '_cache', None)
-    if cached: return cached
+    """从登录包或实时包提取武将。
+
+    ★ 两种数据源，格式不同：
+      A) 登录包（op 32772）：每条武将前有 [long genId][A4 序列]
+      B) 实时包（op 41232 首包）：只有 A4 序列，无 genId
+         → 需要从登录包缓存的 genId 列表按顺序配对
+
+    先尝试模式A（扫描 genId+A4），成功则缓存 genId 列表；
+    失败则尝试模式B（只扫 A4 记录，用缓存 genId 配对）。
+    """
+    global _cached_gen_ids
+
+    # ---- 模式 A：登录包格式（genId 在 A4 前 8 字节）----
+    result_a = _解析_模式A(pkt_data)
+    if result_a:
+        _cached_gen_ids = [g["genId"] for g in result_a]
+        return result_a
+
+    # ---- 模式 B：实时包格式（纯 A4 记录，用缓存 genId 配对）----
+    if _cached_gen_ids:
+        result_b = _解析_模式B(pkt_data, _cached_gen_ids)
+        if result_b:
+            return result_b
+
     return []
 
-def 解析宝藏(pkt_data):
-    """解析宝物包(op4356)→宝物列表"""
-    if not pkt_data or len(pkt_data) < 4: return []
-    try:
-        n = struct.unpack_from(">H", pkt_data, 0)[0]
-        out = []
-        o = 2
-        for _ in range(n):
-            if o + 16 > len(pkt_data): break
-            idx = pkt_data[o]
-            tid = struct.unpack_from(">I", pkt_data, o+1)[0]
-            count = struct.unpack_from(">I", pkt_data, o+5)[0]
-            name = '宝物'
+
+def _解析_模式A(pkt_data):
+    """模式A：登录包 — 扫描 [long genId][A4(首字段=UTF武将名)] 结构"""
+    def 纯中文(s):
+        return s and all("一" <= ch <= "鿿" or ch.isdigit() for ch in s)
+
+    found, seen = [], set()
+    for o in range(11, len(pkt_data) - 3):
+        ln = struct.unpack_from(">H", pkt_data, o)[0]
+        if not (2 <= ln <= 16) or o + 2 + ln > len(pkt_data):
+            continue
+        try:
+            nm = pkt_data[o + 2:o + 2 + ln].decode("utf-8")
+        except Exception:
+            continue
+        if not 纯中文(nm) or len(nm) < 2:
+            continue
+        idoff = o - 8
+        if idoff < 0:
+            continue
+        gid = struct.unpack_from(">q", pkt_data, idoff)[0]
+        if not (1000 < gid < 2 ** 55):
+            continue
+        if gid in seen:
+            continue
+        try:
+            g, _ = _读A4(pkt_data, o)
+        except Exception:
+            continue
+        if g.get("name") != nm:
+            continue
+        seen.add(gid)
+        g["genId"] = gid
+        found.append(g)
+    return found
+
+
+def _解析_模式B(pkt_data, gen_ids):
+    """模式B：实时包 — 扫描纯 A4 记录，按顺序与缓存 genId 配对。
+
+    实时包特征：首包 1800+ 字节含武将 A4 记录（无 genId 前缀）。
+    增量包 130-160 字节不含武将，会自然失败返回 []。
+    """
+    def 纯中文(s):
+        return s and all("一" <= ch <= "鿿" or ch.isdigit() for ch in s)
+
+    # 先找所有可能的 A4 记录起始位置（UTF 中文名开头）
+    candidates = []
+    for o in range(4, len(pkt_data) - 3):
+        ln = struct.unpack_from(">H", pkt_data, o)[0]
+        if not (2 <= ln <= 16) or o + 2 + ln > len(pkt_data):
+            continue
+        try:
+            nm = pkt_data[o + 2:o + 2 + ln].decode("utf-8")
+        except Exception:
+            continue
+        if not 纯中文(nm) or len(nm) < 2:
+            continue
+        try:
+            g, end = _读A4(pkt_data, o)
+        except Exception:
+            continue
+        if g.get("name") != nm:
+            continue
+        candidates.append((o, g, end))
+
+    # 去重：A4 记录不重叠（后一条起点 >= 前一条终点）
+    records = []
+    last_end = 0
+    for o, g, end in candidates:
+        if o >= last_end:
+            records.append(g)
+            last_end = end
+
+    # 按顺序配对 genId
+    if not records or len(records) > len(gen_ids) * 2:
+        return []   # 数量差太多说明解析错了
+
+    found = []
+    for i, g in enumerate(records):
+        if i < len(gen_ids):
+            g["genId"] = gen_ids[i]
+        else:
+            g["genId"] = i + 1     # 兜底
+        found.append(g)
+    return found
+
+
+# ====== 伤兵解析（DEX q;->a0 逆向确认）======
+
+def 解析伤兵(pkt_data):
+    """从登录包/4368包扫描伤兵数据。
+
+    DEX q;->a0 格式（实测确认 @895 fiefId=29 轻骑兵23伤兵）：
+        long  fiefId（封地索引，小整数如 28/29）
+        byte  N1（健康兵种类数）
+        N1 × { byte(兵种seq) + int(数量) }
+        byte  N2（伤兵种类数）
+        N2 × { byte(兵种seq) + int(数量) }
+
+    返回 {fiefId: {"healthy": [(seq,cnt)], "wounded": [(seq,cnt)]}}
+    """
+    result = {}
+    n = len(pkt_data)
+    o = 0
+    while o < n - 20:
+        # 找合理的 fiefId（小整数 1~1000）+ N1 < 10
+        fid = struct.unpack_from(">q", pkt_data, o)[0]
+        if not (1 <= fid <= 1000):
+            o += 1
+            continue
+        pos = o + 8
+        if pos >= n:
+            break
+        n1 = pkt_data[pos]; pos += 1
+        if not (0 < n1 < 10):
+            o += 1
+            continue
+        # 验证 N1 个 {byte(<=15), int(>=0, <200000)} 结构
+        healthy = []
+        valid = True
+        for _ in range(n1):
+            if pos + 5 > n:
+                valid = False; break
+            st = pkt_data[pos]
+            ct = struct.unpack_from(">i", pkt_data, pos + 1)[0]
+            if st > 15 or ct < 0 or ct > 200000:
+                valid = False; break
+            healthy.append((st, ct))
+            pos += 5
+        if not valid:
+            o += 1
+            continue
+        # N2 伤兵
+        if pos >= n:
+            o += 1
+            continue
+        n2 = pkt_data[pos]; pos += 1
+        if n2 > 10:
+            o += 1
+            continue
+        wounded = []
+        for _ in range(n2):
+            if pos + 5 > n:
+                break
+            st = pkt_data[pos]
+            ct = struct.unpack_from(">i", pkt_data, pos + 1)[0]
+            if st > 15 or ct < 0 or ct > 200000:
+                break
+            wounded.append((st, ct))
+            pos += 5
+        if healthy or wounded:
+            result[fid] = {"healthy": healthy, "wounded": wounded}
+        o = pos  # 跳到下一个块
+    return result
+
+
+def 刷新伤兵(client):
+    """使用 op 4657 查询所有封地的伤兵数据。
+
+    遍历 client.封地列表，对每个封地发送 op 4657 查询，解析响应包里的伤兵数据。
+    响应格式（从 s.har 逆向）：偏移41=封地ID(8B), 49=N1健康兵, 50+=[seq(1B)+cnt(4B)]×N1, X=N2伤兵, X+1+=[seq(1B)+cnt(4B)]×N2
+
+    返回 {fiefId: {"healthy": [(seq,cnt)], "wounded": [(seq,cnt)]}}
+    """
+    import sys
+    result = {}
+
+    fiefs = getattr(client, '封地列表', [])
+    if not fiefs:
+        print(f"[伤兵] 封地列表为空，无法查询", file=sys.stderr)
+        return {}
+
+    print(f"[伤兵] 开始查询 {len(fiefs)} 个封地的伤兵数据", file=sys.stderr)
+
+    for fief in fiefs:
+        fief_id = fief.get('fiefId') or fief.get('id')
+        if not fief_id:
+            continue
+
+        # 发送 op 4657 查询这个封地的伤兵（soldier_type=-1 表示全部兵种）
+        payload = (struct.pack(">q", int(fief_id))
+                   + struct.pack(">h", -1)  # 全部兵种
+                   + struct.pack(">i", 0))   # cure_type=0 铜钱治疗
+        pk = 真机发(client, 4657, b"\x00\x00" + payload)
+
+        resp_op = 4657 + 0x7000  # 33329
+        for p in pk or []:
+            if p.get("op") != resp_op or not p.get("data"):
+                continue
+
+            d = p["data"]
+            if len(d) < 50:
+                continue
+
             try:
-                import json as _j
-                tm = getattr(解析宝藏, '_tmap', None)
-                if tm is None:
-                    try: tm = _j.load(open('/root/帝王三国/物品名表.json', encoding='utf-8'))
-                    except: tm = {}
-                    解析宝藏._tmap = tm
-                name = tm.get(str(tid), tm.get(str(idx), '宝物'))
-            except: pass
-            out.append({'id': tid, 'index': idx, 'count': count, 'name': name})
-            o += 9
-        return out
-    except: return []
+                parsed_fief_id = struct.unpack_from(">q", d, 41)[0]
+                n1_healthy = d[49]
+
+                o = 50
+                healthy = []
+                for _ in range(n1_healthy):
+                    if o + 5 > len(d):
+                        break
+                    seq = d[o]
+                    cnt = struct.unpack_from(">I", d, o + 1)[0]
+                    healthy.append((seq, cnt))
+                    o += 5
+
+                if o >= len(d):
+                    continue
+
+                n2_wounded = d[o]
+                o += 1
+
+                wounded = []
+                for _ in range(n2_wounded):
+                    if o + 5 > len(d):
+                        break
+                    seq = d[o]
+                    cnt = struct.unpack_from(">I", d, o + 1)[0]
+                    wounded.append((seq, cnt))
+                    o += 5
+
+                result[parsed_fief_id] = {"healthy": healthy, "wounded": wounded}
+
+                total_wounded = sum(cnt for _, cnt in wounded)
+                print(f"[伤兵] 封地 {parsed_fief_id}: 健康{len(healthy)}种, 伤兵{len(wounded)}种(共{total_wounded})", file=sys.stderr)
+
+            except Exception as e:
+                print(f"[伤兵] 解析封地 {fief_id} 响应失败: {e}", file=sys.stderr)
+                continue
+
+    print(f"[伤兵] 查询完成，共 {len(result)} 个封地有数据", file=sys.stderr)
+    return result
+
+
+def 查询伤兵(client, gen_id, soldier_type=-1, cure_type=0):
+    """op 4657 reqHurtSoldierCurePreInfo — 查询伤兵信息 + 治疗费用。
+
+    DEX sender q;->l1 签名 (J I I)V：
+        writeLong(ID)           ← genId 或 fiefId
+        writeShort(兵种索引)     ← -1=全部, >=0=特定兵种
+        writeInt(治疗方式)       ← 0=铜钱, 1=黄金（推测）
+
+    DEX handler q;->m1 响应：
+        readLong()              ← 未知
+        readShort() → type      ← <0 = 全部治疗, >=0 = 单兵种
+        readLong() → copperCost
+        readLong() → goldCost
+    """
+    payload = (struct.pack(">q", int(gen_id))
+               + struct.pack(">h", int(soldier_type))
+               + struct.pack(">i", int(cure_type)))
+    pk = 真机发(client, 4657, b"\x00\x00" + payload)
+    resp_op = 4657 + 0x7000   # 33329
+    for p in pk or []:
+        if p.get("op") != resp_op or not p.get("data"):
+            continue
+        d = p["data"]
+        if len(d) < 26:
+            continue
+        try:
+            o = 0
+            _unk = struct.unpack_from(">q", d, o)[0]; o += 8
+            typ = struct.unpack_from(">h", d, o)[0]; o += 2
+            copper_cost = struct.unpack_from(">q", d, o)[0]; o += 8
+            gold_cost = struct.unpack_from(">q", d, o)[0]; o += 8
+            return {"type": typ, "copperCost": copper_cost, "goldCost": gold_cost,
+                    "genId": int(gen_id), "raw": d.hex()}
+        except Exception:
+            continue
+    return None
+
+
+def 治疗伤兵(client, fief_id, soldier_type=0, count=-1, cure_byte=0):
+    """op 4656 治疗伤兵（真机抓包验证 2024-09）。
+
+    载荷（16B + 前缀 00 00 = 18B）：
+        [00 00][long fiefId][byte cureType][short soldierSeq][int count][byte 0x00]
+        ★ 末尾 0x00 必须带，否则服务端静默忽略（同配兵教训）。
+        ★ count=-1 表示全部治疗。
+
+    响应：[short code][long ?][long ?][long fiefId][byte N][N × {byte seq, int cnt}]
+        code: 0=成功, -1=铜钱不足, -2=失败, -3=黄金不足
+    """
+    payload = (struct.pack(">q", int(fief_id))
+               + struct.pack(">b", int(cure_byte))
+               + struct.pack(">h", int(soldier_type))
+               + struct.pack(">i", int(count))
+               + b"\x00")
+    pk = _发_pkt(client, 4656, b"\x00\x00" + payload)
+    resp_op = 4656 + 0x7000   # 33328
+    for p in pk or []:
+        if p.get("op") != resp_op or not p.get("data"):
+            continue
+        d = p["data"]
+        if len(d) < 2:
+            continue
+        code = struct.unpack_from(">h", d, 0)[0]
+        msg = {0: "成功", -1: "铜钱不足", -2: "治疗失败", -3: "黄金不足"}.get(code, f"错误{code}")
+        return {"ok": code == 0, "code": code, "msg": msg, "raw": d.hex()}
+    return {"ok": False, "code": -99, "msg": "无响应", "raw": ""}
+
+
+def 解析宝藏(packets):
+    """解析 op 4356 响应 → {"gold", "silver", "treasures": [{id, count, expire}]}
+
+    响应结构（角色协议.md §5 确认）：
+        long(8B)  黄金 Ga
+        long(8B)  白银 Ha
+        short(2B) N 条目数
+        N × { short(2B 宝藏ID) + short(2B 个数) + long(8B 到期时间) } = 12B/条
+    """
+    resp_op = 4356 + 0x7000   # 33028
+    for p in (packets or []):
+        d = p.get("data") if isinstance(p, dict) else None
+        if not d or (isinstance(p, dict) and p.get("op") != resp_op):
+            continue
+        if len(d) < 18:
+            continue
+        try:
+            gold = struct.unpack_from(">q", d, 0)[0]
+            silver = struct.unpack_from(">q", d, 8)[0]
+            n = struct.unpack_from(">H", d, 16)[0]
+            items = []
+            o = 18
+            for _ in range(n):
+                if o + 12 > len(d):
+                    break
+                tid = struct.unpack_from(">H", d, o)[0]
+                cnt = struct.unpack_from(">H", d, o + 2)[0]
+                exp = struct.unpack_from(">q", d, o + 4)[0]
+                items.append({"id": tid, "count": cnt, "expire": exp})
+                o += 12
+            return {"gold": gold, "silver": silver, "treasures": items}
+        except Exception:
+            continue
+    return {"gold": 0, "silver": 0, "treasures": []}
