@@ -1156,5 +1156,6 @@ def 解析宝藏(packets):
     return {"gold": 0, "silver": 0, "treasures": []}
 
 
-# 导入军情模块以供上层调用
-from .protocol.military import 查询军情
+def 查询军情(client):
+    """军情（行军中/返回中/战斗中）—— 协议待抓包后再实现，先返回空占位"""
+    return {"expeditions": [], "alerts": [], "garrison": []}
