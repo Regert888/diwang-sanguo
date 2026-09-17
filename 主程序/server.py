@@ -295,123 +295,28 @@ class BotSession:
     冲车seq = 5                     # 沖城車（见 兵种名表.json）
 
     def 配兵配置(self):
-        """账号配置 zone3 里的配兵表 → {武将ID: {"seq","count","enabled"}}"""
+        """转发到 features/military.py"""
+        import features.military as military
         cfg = configs_db.get(str(self.acct_id)) or {}
-        out = {}
-        for z in (cfg.get("zone3") or []):
-            if not isinstance(z, dict):
-                continue
-            if (z.get("type") or "ASSIGN_SOLDIER") != "ASSIGN_SOLDIER":
-                continue
-            seq = 兵种seq(z.get("soldierType"))
-            try:
-                cnt = int(z.get("count") or 0)
-            except Exception:
-                cnt = 0
-            for gid in (z.get("generalIds") or []):
-                try:
-                    out[int(gid)] = {"seq": seq, "count": cnt,
-                                     "enabled": bool(z.get("enabled"))}
-                except Exception:
-                    continue
-        return out
+        return military.配兵配置(self, cfg, 兵种seq)
 
     def 检查出征资格(self, 武将ID):
-        """商辅规则：① 必须在配兵列表启用 ② 兵力不低于 1200(冲车 200)。
-
-        返回 (是否可出征, 原因)。未来出征类功能派将前调用它即可。
-        """
-        try:
-            武将ID = int(武将ID)
-        except Exception:
-            return False, "无效武将ID"
-        row = self.配兵配置().get(武将ID)
-        if not row:
-            return False, "未在配兵列表配置"
-        if not row.get("enabled"):
-            return False, "配兵列表中未打勾启用"
-        当前 = self._部队表.get(武将ID)
-        cnt = 当前[1] if 当前 else 0
-        门槛 = self.冲车最低兵力 if row.get("seq") == self.冲车seq else self.出征最低兵力
-        if cnt < 门槛:
-            return False, "兵力不足 %d（当前 %d）" % (门槛, cnt)
-        return True, "可出征"
+        """转发到 features/military.py"""
+        import features.military as military
+        cfg = configs_db.get(str(self.acct_id)) or {}
+        return military.检查出征资格(self, cfg, 兵种seq, 武将ID)
 
     def 出征资格表(self):
-        """所有已配置将领的出征资格，供前端/出征功能使用。"""
-        out = []
-        for gid, row in self.配兵配置().items():
-            ok, why = self.检查出征资格(gid)
-            当前 = self._部队表.get(gid)
-            out.append({"genId": gid, "seq": row.get("seq"), "count": row.get("count"),
-                        "enabled": row.get("enabled"), "curCount": 当前[1] if 当前 else 0,
-                        "canDispatch": ok, "reason": why})
-        return out
+        """转发到 features/military.py"""
+        import features.military as military
+        cfg = configs_db.get(str(self.acct_id)) or {}
+        return military.出征资格表(self, cfg, 兵种seq)
 
     def _自动配兵(self):
-        """按账号配置 zone3(ASSIGN_SOLDIER) 自动补兵。
-
-        每轮刷新检查：武将当前（兵种seq, 数量）与配置不符 → 发 op 4646 补齐/取消。
-        同一武将 60 秒内最多补一次，避免刷屏和封号风险。
-        """
-        from core.king_client import 配兵 as _配兵, 解析配兵应答
+        """转发到 features/military.py"""
+        import features.military as military
         cfg = configs_db.get(str(self.acct_id)) or {}
-        行 = []
-        for z in (cfg.get("zone3") or []):
-            if not isinstance(z, dict):
-                continue
-            if (z.get("type") or "ASSIGN_SOLDIER") != "ASSIGN_SOLDIER":
-                continue
-            if not z.get("enabled"):
-                continue
-            seq = 兵种seq(z.get("soldierType"))
-            try:
-                cnt = int(z.get("count") or 0)
-            except Exception:
-                cnt = 0
-            for gid in (z.get("generalIds") or []):
-                try:
-                    行.append((int(gid), seq, cnt))
-                except Exception:
-                    continue
-        if not 行:
-            return
-        # 会话失效保护：连续空应答说明掉线/被踢，暂停自动配兵，避免持续发无效包
-        if self._pb_dead >= 3:
-            return
-        now = time.time()
-        for gid, seq, cnt in 行:
-            当前 = self._部队表.get(gid)
-            if 当前 and 当前[0] == seq and 当前[1] == cnt:
-                continue                                  # 已符合配置
-            if now - self._pb_last.get(gid, 0) < 60:
-                continue                                  # 冷却中
-            try:
-                r = 解析配兵应答(_配兵(self.client, gid, seq, cnt))
-            except Exception as e:
-                self.log(f"[自动配兵] 异常: {e}")
-                self._pb_dead += 1
-                continue
-            self._pb_last[gid] = now
-            if r.get("ok"):
-                self._pb_dead = 0
-                # ★ 关键：服务端可能只给增量包，界面数据不会自动更新。
-                #   所以把应答里的新值直接写回本地，避免每轮白发一次配兵包。
-                if r.get("newCount"):
-                    self._部队表[gid] = (r.get("newSeq") or seq, r["newCount"])
-                else:
-                    self._部队表.pop(gid, None)
-                self._同步部队到前端()
-                self.log(f"[自动配兵] 武将{gid} → {seq} × {cnt}（{r.get('oldCount')}→{r.get('newCount')}）")
-            elif not (r.get("raw") or ""):
-                self._pb_dead += 1
-                self.log(f"[自动配兵] 无应答（{self._pb_dead}/3），会话可能已失效")
-                if self._pb_dead >= 3:
-                    self.log("[自动配兵] 已暂停：会话失效，请在页面上重新启动账号")
-                    return
-            else:
-                self._pb_dead = 0
-                self.log(f"[自动配兵] 失败 武将{gid} (应答 {(r.get('raw') or '')[:30]})")
+        military.自动配兵(self, cfg, 兵种seq)
 
     def _同步部队到前端(self):
         """把 _部队表 的变化同步回 generals/troops（增量包不刷新时也能立即看到）"""
@@ -481,196 +386,12 @@ class BotSession:
 
         routine.执行(self.client, cfg, character, self.log)
 
-    def _山贼锚点序列(self, cx, cy):
-        """生成 6×6 锚点坐标，从中心向外一圈圈铺开。
-
-        ★ 真机抓包（刷新山贼.har）实证：op 5440 载荷 (0,x,y) 里的 x,y 是
-          【地图坐标】不是页码，锚点步长 = 6（每个锚点覆盖 [x,x+5]×[y,y+5]）。
-          抓到的真机序列：(123,30)→(117,30)→(117,36)→(123,36)，x/y 差值都是 6。
-        """
-        STEP = 6
-        w = int(getattr(self.client, "map_w", 0) or 0) or 187
-        h = int(getattr(self.client, "map_h", 0) or 0) or 56
-        if cx <= 0 or cy <= 0:          # 未配置中心 → 从地图中心开始
-            cx, cy = w // 2, h // 2
-        pts = []
-        for r in range(max(w, h) // STEP + 2):
-            if r == 0:
-                ring = [(0, 0)]
-            else:                        # 第 r 圈（切比雪夫环）
-                ring = [(d, -r) for d in range(-r, r + 1)]
-                ring += [(d, r) for d in range(-r, r + 1)]
-                ring += [(-r, d) for d in range(-r + 1, r)]
-                ring += [(r, d) for d in range(-r + 1, r)]
-            for dx, dy in ring:
-                x, y = cx + dx * STEP, cy + dy * STEP
-                if 0 <= x < w and 0 <= y < h:
-                    pts.append((x, y))
-        return pts
-
-    def _翻页找山贼(self, lv, 已打, 已打坐标, cx, cy, 最多翻页=15):
-        """刷新山贼：一次翻一页（一个锚点＝一个 5440 包），
-        命中符合等级的就【立刻返回】，没有就翻下一页。
-
-        这样出征紧跟在刷新之后发出，山贼 ID 还是新鲜的 —— 旧实现先扫全图
-        （120 包/请求 × 很多轮，拿到 8 万个山贼）再出征，ID 早就失效了，
-        服务端回 code=-28。
-
-        游标 _sh_i 跨轮持久化，避免每次都从同一片区域重新翻。
-        """
-        from core.king_client import 扫描山贼
-        pts = getattr(self, "_sh_pts", None)
-        if not pts:
-            pts = self._山贼锚点序列(cx, cy)
-            self._sh_pts = pts
-        if not pts:
-            return None, 0
-        i0 = getattr(self, "_sh_i", 0)
-        翻过 = 0
-        for k in range(min(最多翻页, len(pts))):
-            i = (i0 + k) % len(pts)
-            x, y = pts[i]
-            翻过 = k + 1
-            try:
-                fs = 扫描山贼(self.client, [(x, y)])    # ★ 一个请求只发一个包
-            except Exception:
-                continue
-            for t in fs.values():
-                if t.get("lvl") not in lv:
-                    continue
-                if t["id"] in 已打 or (t["x"], t["y"]) in 已打坐标:
-                    continue
-                self._sh_i = (i + 1) % len(pts)
-                self.log("[刷黄] 翻第%d页 锚点(%d,%d) → 命中 %s Lv%s 坐标(%d,%d)" % (
-                    翻过, x, y, t.get("name"), t.get("lvl"), t["x"], t["y"]))
-                return t, 翻过
-        self._sh_i = (i0 + 翻过) % len(pts)
-        return None, 翻过
-
     def _刷黄(self):
-        """刷黄：刷新一页山贼 → 有符合等级的就出征 → 没有就翻下一页。
+        """刷黄板块 → features/thief.py（原样搬迁，2026-09-17）"""
+        import features.thief as thief
+        cfg = configs_db.get(str(self.acct_id)) or {}
+        thief.执行(self, cfg)
 
-        ★ 真机抓包（刷新山贼.har）修正的认知：
-          · op5440 一个请求只发【一个】包，载荷 (0,x,y) 的 x,y 是【地图坐标】
-          · 每个锚点覆盖 6×6 区域，锚点步长 = 6
-          · 旧代码把 (x,y) 当分页参数批量发 120 包扫全图，拿到 8 万个山贼后
-            再出征，此时 ID 已失效 → 服务端回 code=-28
-        """
-        import time as _t
-        try:
-            from core.king_client import 出征打山贼
-            now = _t.time()
-            if now - getattr(self, "_sh_last", 0) < 15:
-                return
-            self._sh_last = now
-
-            cfg = configs_db.get(str(self.acct_id)) or {}
-            tg_cfg = cfg.get("thiefGlobal") or {}
-            cx = int(tg_cfg.get("centerX", 0) or 0)
-            cy = int(tg_cfg.get("centerY", 0) or 0)
-
-            # ---- 1) 读启用的刷黄编队（zone3 / type=THIEF）
-            队 = []
-            for t in (cfg.get("zone3") or []):
-                if t.get("type") != "THIEF" or not t.get("enabled"):
-                    continue
-                gids = t.get("generalIds") or []
-                lvs = set(int(v) for v in (t.get("thiefLevels") or []) if str(v).isdigit())
-                if gids and lvs:
-                    队.append({"generalIds": [int(x) for x in gids], "levels": lvs})
-            if not 队:
-                self.log("[刷黄] 未配置启用的刷黄编队（军事→刷黄 里设置）")
-                return
-            lv = 队[0]["levels"]
-
-            # ---- 2) 找所有空闲编队（支持多队并行出征）
-            武将表 = {g.get("genId"): g for g in self.generals}
-            可用队列 = []
-            全忙原因 = []
-            for t in 队:
-                sts = [武将表.get(g) for g in t["generalIds"]]
-                if any(x is None for x in sts):
-                    continue
-                if not all((x.get("statusText") or "待命") == "待命" for x in sts):
-                    全忙原因.append("非待命")
-                    continue
-                if any(int(x.get("soldierCount", 0) or 0) < 1 for x in sts):
-                    全忙原因.append("%s无兵" % sts[0].get("name", "?"))
-                    continue
-                if any(int(x.get("curHp", 0) or 0) < 1 for x in sts):
-                    全忙原因.append("%s体力0" % sts[0].get("name", "?"))
-                    continue
-                可用队列.append(t)
-            if not 可用队列:
-                self.log("[刷黄] 编队未就绪（%s），等待返回" % "/".join(全忙原因 or ["未知"]))
-                return
-
-            # ---- 3+4+5) ★ 刷新一页 → 有符合的就出征，没有就翻下一页
-            已打 = {k: v for k, v in getattr(self, "_sh_done", {}).items() if now - v < 900}
-            self._sh_done = 已打
-            已打坐标 = {k: v for k, v in getattr(self, "_sh_xy", {}).items() if now - v < 900}
-            self._sh_xy = 已打坐标
-
-            # ---- 6+7+8) 为每个空闲编队翻页找目标并出征
-            dispatched = 0
-            总翻页 = 0
-            for 可用队 in 可用队列:
-                目标, 用页数 = self._翻页找山贼(lv, 已打, 已打坐标, cx, cy)
-                总翻页 += 用页数
-                if 目标 is None:
-                    self.log("[刷黄] 翻了%d页仍无符合等级%s的山贼（已打%d）" % (
-                        总翻页, sorted(lv), len(已打)))
-                    break
-                已打坐标[(目标["x"], 目标["y"])] = now
-                # 出征
-                for gid in 可用队["generalIds"]:
-                    w = 武将表.get(gid, {})
-                    self.log("[刷黄] 出征 → %s Lv%d 坐标(%d,%d) | %s 体力%d/%d 兵%d" % (
-                        目标["name"], 目标["lvl"], 目标["x"], 目标["y"],
-                        w.get("name", "?"), w.get("curHp", 0), w.get("maxHp", 0),
-                        w.get("soldierCount", 0)))
-                try:
-                    r = 出征打山贼(self.client, 可用队["generalIds"], 目标["id"])
-                    已打[目标["id"]] = now
-                    self._sh_xy[(目标["x"], 目标["y"])] = now
-                    self._force_full_at = time.time() + 4
-                    出征成功 = False
-                    resp_op = 5410 + 0x7000
-                    出征码 = None
-                    出征消息 = ""
-                    for p in (r or []):
-                        if p.get("op") == resp_op and p.get("data") and len(p["data"]) >= 1:
-                            d = p["data"]
-                            出征码 = struct.unpack_from(">b", d, 0)[0]
-                            if len(d) >= 3:
-                                try:
-                                    mlen = struct.unpack_from(">H", d, 1)[0]
-                                    if 1 <= mlen <= 200 and 3 + mlen <= len(d):
-                                        出征消息 = d[3:3+mlen].decode("utf-8", "replace")
-                                except Exception:
-                                    pass
-                            出征成功 = (出征码 == 0)
-                            break
-                    if 出征成功:
-                        self.log("[刷黄] ✓ 已出征，行军至 (%d,%d)" % (目标["x"], 目标["y"]))
-                        for gen in getattr(self, "generals", []):
-                            if gen.get("genId") in 可用队["generalIds"]:
-                                gen["statusText"] = "行军中"
-                        dispatched += 1
-                    elif r:
-                        raw_hex = ""
-                        for p in r:
-                            if p.get("op") == resp_op and p.get("data"):
-                                raw_hex = p["data"][:32].hex()
-                                break
-                        self.log("[刷黄] ✗ 出征被拒 code=%s msg='%s' raw=%s | 响应包数=%d" % (
-                            出征码, 出征消息, raw_hex, len(r)))
-                    else:
-                        self.log("[刷黄] ✗ 出征无响应")
-                except Exception as ex:
-                    self.log("[刷黄] ✗ 出征失败: %s" % ex)
-        except Exception as e:
-            self.log("[刷黄] 异常: %s" % e)
 
     def 配兵(self, 任务列表):
         """配兵（op 4646 generalWithSoldier，真机格式）。
@@ -845,6 +566,17 @@ class BotSession:
             self._抓状态()
         except Exception:
             pass
+        # 5) 伤兵数据（op 4368 刷新封地）
+        try:
+            from core.king_client import 刷新伤兵
+            伤兵字典 = 刷新伤兵(self.client)
+            if 伤兵字典:
+                self._伤兵表 = 伤兵字典
+                # 重建 troops（伤兵数据刚更新，需要重新构建）
+                self.troops = self._建部队(self.generals, self.character.get("charName", ""))
+                ok = True
+        except Exception as e:
+            self.log(f"[调试] 伤兵查询失败: {e}")
         self._lastRefresh = time.time()
         return ok
 
@@ -875,81 +607,51 @@ class BotSession:
         return gens
 
     def _建部队(self, gens, charName=""):
-        """武将 → 军队表结构"""
+        """封地 → 军队表结构（显示每个封地的闲兵和伤兵）"""
         伤兵表 = getattr(self, "_伤兵表", {})
         out = []
-        for i, g in enumerate(gens):
-            cnt = int(g.get("soldierCount", 0) or 0)
-            gid = g.get("genId")
-            wounded = 伤兵表.get(gid, 0)
-            if wounded <= 0:  # 只显示有伤兵的武将
-                continue
-            out.append({
-                "fiefIndex": i + 1,
-                "soldierName": g.get("soldierName", "—"),
-                "idleCount": cnt,
-                "woundedCount": wounded,
-                "fiefName": (charName or "") + "基地",
-                "genId": gid,
-            })
+
+        # 伤兵表结构：{封地名: {"闲兵": [(seq,cnt),...], "伤兵": [(seq,cnt),...]}}
+        for idx, (fief_name, data) in enumerate(伤兵表.items()):
+            闲兵列表 = data.get("闲兵", [])
+            伤兵列表 = data.get("伤兵", [])
+
+            # 按兵种分组显示（每个兵种一行）
+            兵种汇总 = {}  # {seq: {"闲兵": cnt, "伤兵": cnt}}
+            for seq, cnt in 闲兵列表:
+                if seq not in 兵种汇总:
+                    兵种汇总[seq] = {"闲兵": 0, "伤兵": 0}
+                兵种汇总[seq]["闲兵"] = cnt
+
+            for seq, cnt in 伤兵列表:
+                if seq not in 兵种汇总:
+                    兵种汇总[seq] = {"闲兵": 0, "伤兵": 0}
+                兵种汇总[seq]["伤兵"] = cnt
+
+            # 每个兵种一行
+            for seq, counts in 兵种汇总.items():
+                soldier_name = (self._兵种名表 or {}).get(str(seq), f"兵种{seq}")
+                out.append({
+                    "fiefIndex": idx + 1,
+                    "soldierName": soldier_name,
+                    "idleCount": counts["闲兵"],
+                    "woundedCount": counts["伤兵"],
+                    "fiefName": fief_name,
+                    "genId": 0,  # 封地没有武将ID
+                })
+
         return out
 
     def _查伤兵(self):
-        """主动向服务器查询实时伤兵数据（不再依赖 login_packets 旧数据）"""
-        if not self.client:
-            return
-        fiefs = 刷新伤兵(self.client)
-        if not fiefs:
-            self.log("[伤兵] 查询无数据（op4368 未返回有效封地）")
-            return
-        self._伤兵表_raw = fiefs
-        seq伤兵 = {}
-        for fid, info in fiefs.items():
-            for seq, cnt in info.get("wounded", []):
-                if cnt > 0:
-                    seq伤兵[seq] = seq伤兵.get(seq, 0) + cnt
-        self._伤兵总数 = sum(seq伤兵.values())
-        seq到将 = {}
-        for gid, (s, _c) in getattr(self, "_部队表", {}).items():
-            seq到将.setdefault(s, []).append(gid)
-        伤兵 = {}
-        for seq, cnt in seq伤兵.items():
-            gids = seq到将.get(seq)
-            if gids:
-                伤兵[gids[0]] = 伤兵.get(gids[0], 0) + cnt
-        self._伤兵表 = 伤兵
-        if self._伤兵总数 > 0:
-            self.log("[伤兵] 查到 %d 伤兵（封地%d个 兵种%s）" % (
-                self._伤兵总数, len(fiefs), dict(seq伤兵)))
+        """转发到 features/heal.py"""
+        import features.heal as heal
+        heal.查伤兵(self)
 
     def _治疗伤兵(self):
-        """自动治疗伤兵（读 HEAL_SOLDIER.enabled 配置）
-        用封地 fiefId + 兵种 seq 发 op 4656 治疗。
-        """
+        """转发到 features/heal.py"""
+        import features.heal as heal
         cfg = configs_db.get(str(self.acct_id)) or {}
-        heal_cfg = cfg.get("HEAL_SOLDIER") or {}
-        if not heal_cfg.get("enabled"):
-            if getattr(self, "_伤兵总数", 0) > 0 and not getattr(self, "_heal_warn", False):
-                self.log("[治疗] ⚠ 有%d伤兵但自动治疗未开启（前端→伤兵治疗→开关）" % self._伤兵总数)
-                self._heal_warn = True
-            return
-        if not self.client:
-            return
-        伤兵raw = getattr(self, "_伤兵表_raw", {})
-        if not 伤兵raw:
-            return
-        for fid, info in 伤兵raw.items():
-            for seq, cnt in info.get("wounded", []):
-                if cnt <= 0:
-                    continue
-                try:
-                    r = 治疗伤兵(self.client, fid, soldier_type=seq, count=cnt)
-                    if r and r.get("ok"):
-                        self.log("[治疗] ✓ 封地%d 兵种%d ×%d 已治疗" % (fid, seq, cnt))
-                    elif r:
-                        self.log("[治疗] ✗ %s" % r.get("msg", "失败"))
-                except Exception as e:
-                    self.log("[治疗] 异常: %s" % e)
+        heal.治疗伤兵(self, cfg)
 
     def _刷新武将(self):
         """op 4368 实时包 → 刷新武将/部队（无需重新登录）"""

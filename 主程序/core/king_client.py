@@ -973,83 +973,88 @@ def 解析伤兵(pkt_data):
 
 
 def 刷新伤兵(client):
-    """使用 op 4657 查询所有封地的伤兵数据。
+    """使用 op 4368 查询所有封地的伤兵数据。
 
-    遍历 client.封地列表，对每个封地发送 op 4657 查询，解析响应包里的伤兵数据。
-    响应格式（从 s.har 逆向）：偏移41=封地ID(8B), 49=N1健康兵, 50+=[seq(1B)+cnt(4B)]×N1, X=N2伤兵, X+1+=[seq(1B)+cnt(4B)]×N2
-
-    返回 {fiefId: {"healthy": [(seq,cnt)], "wounded": [(seq,cnt)]}}
+    扫描响应包中的 UTF-8 字符串找封地名，在名字附近找闲兵/伤兵数据。
+    返回 {封地名: {"闲兵": [(seq,cnt),...], "伤兵": [(seq,cnt),...]}}
     """
     import sys
-    result = {}
 
-    fiefs = getattr(client, '封地列表', [])
-    if not fiefs:
-        print(f"[伤兵] 封地列表为空，无法查询", file=sys.stderr)
-        return {}
+    pk = client.send_op(4368, b"")
 
-    print(f"[伤兵] 开始查询 {len(fiefs)} 个封地的伤兵数据", file=sys.stderr)
-
-    for fief in fiefs:
-        fief_id = fief.get('fiefId') or fief.get('id')
-        if not fief_id:
+    for p in pk or []:
+        if p['op'] != 4368 + 0x7000 or not p.get('data'):
             continue
 
-        # 发送 op 4657 查询这个封地的伤兵（soldier_type=-1 表示全部兵种）
-        payload = (struct.pack(">q", int(fief_id))
-                   + struct.pack(">h", -1)  # 全部兵种
-                   + struct.pack(">i", 0))   # cure_type=0 铜钱治疗
-        pk = 真机发(client, 4657, b"\x00\x00" + payload)
+        d = p['data']
+        if len(d) < 100:
+            continue
 
-        resp_op = 4657 + 0x7000  # 33329
-        for p in pk or []:
-            if p.get("op") != resp_op or not p.get("data"):
-                continue
+        result = {}  # {封地名: {"闲兵": [...], "伤兵": [...]}}
 
-            d = p["data"]
-            if len(d) < 50:
-                continue
-
+        # 1. 扫描所有 UTF-8 字符串（2字节长度前缀）
+        封地候选 = []
+        for i in range(len(d) - 2):
             try:
-                parsed_fief_id = struct.unpack_from(">q", d, 41)[0]
-                n1_healthy = d[49]
+                ln = struct.unpack_from('>H', d, i)[0]
+                if 6 <= ln <= 60 and i + 2 + ln <= len(d):
+                    s = d[i+2:i+2+ln].decode('utf-8')
+                    # 含"基地"或"封地"的字符串
+                    if '基地' in s or '封地' in s:
+                        封地候选.append((i, ln, s))
+            except:
+                pass
 
-                o = 50
-                healthy = []
-                for _ in range(n1_healthy):
-                    if o + 5 > len(d):
-                        break
-                    seq = d[o]
-                    cnt = struct.unpack_from(">I", d, o + 1)[0]
-                    healthy.append((seq, cnt))
-                    o += 5
+        # 2. 在每个封地名附近找兵力数据
+        for off, ln, name in 封地候选:
+            # 从封地名之后开始扫描（跳过名字本身）
+            start = off + 2 + ln
+            end = min(start + 200, len(d))
+            chunk = d[start:end]
 
-                if o >= len(d):
-                    continue
+            # 找 n1（健康兵种数）
+            for j in range(min(100, len(chunk))):
+                n1 = chunk[j]
+                if 0 <= n1 <= 10:
+                    闲兵 = []
+                    伤兵 = []
+                    pos = j + 1
 
-                n2_wounded = d[o]
-                o += 1
+                    # 读健康兵
+                    for _ in range(n1):
+                        if pos + 5 > len(chunk):
+                            break
+                        seq = chunk[pos]
+                        cnt = struct.unpack_from('>i', chunk, pos+1)[0]
+                        if 1 <= seq <= 10 and 0 < cnt < 100000:
+                            闲兵.append((seq, cnt))
+                        pos += 5
 
-                wounded = []
-                for _ in range(n2_wounded):
-                    if o + 5 > len(d):
-                        break
-                    seq = d[o]
-                    cnt = struct.unpack_from(">I", d, o + 1)[0]
-                    wounded.append((seq, cnt))
-                    o += 5
+                    # 读伤兵数 n2
+                    if pos >= len(chunk):
+                        continue
+                    n2 = chunk[pos]
+                    if 0 <= n2 <= 10:
+                        pos += 1
+                        for _ in range(n2):
+                            if pos + 5 > len(chunk):
+                                break
+                            seq = chunk[pos]
+                            cnt = struct.unpack_from('>i', chunk, pos+1)[0]
+                            if 1 <= seq <= 10 and 0 < cnt < 100000:
+                                伤兵.append((seq, cnt))
+                            pos += 5
 
-                result[parsed_fief_id] = {"healthy": healthy, "wounded": wounded}
+                        # 找到有效数据就记录
+                        if 闲兵 or 伤兵:
+                            result[name] = {"闲兵": 闲兵, "伤兵": 伤兵}
+                            break  # 找到一个有效块就跳出
 
-                total_wounded = sum(cnt for _, cnt in wounded)
-                print(f"[伤兵] 封地 {parsed_fief_id}: 健康{len(healthy)}种, 伤兵{len(wounded)}种(共{total_wounded})", file=sys.stderr)
+        print(f"[伤兵] 解析完成，{len(result)} 个封地", file=sys.stderr)
+        return result
 
-            except Exception as e:
-                print(f"[伤兵] 解析封地 {fief_id} 响应失败: {e}", file=sys.stderr)
-                continue
-
-    print(f"[伤兵] 查询完成，共 {len(result)} 个封地有数据", file=sys.stderr)
-    return result
+    print(f"[伤兵] op 4368 无有效响应", file=sys.stderr)
+    return {}
 
 
 def 查询伤兵(client, gen_id, soldier_type=-1, cure_type=0):
