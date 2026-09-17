@@ -1154,3 +1154,7 @@ def 解析宝藏(packets):
         except Exception:
             continue
     return {"gold": 0, "silver": 0, "treasures": []}
+
+
+# 导入军情模块以供上层调用
+from .protocol.military import 查询军情

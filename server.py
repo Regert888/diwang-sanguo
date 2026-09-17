@@ -12,7 +12,8 @@ sys.path.insert(0, BASE)
 from core.king_client import (
     取区服列表, 匹配区服, 进入游戏,
     解析武将列表, 解析宝藏,
-    刷新伤兵, 治疗伤兵
+    刷新伤兵, 治疗伤兵,
+    查询军情
 )
 
 # ====== 区服列表缓存 ======
@@ -1144,6 +1145,19 @@ class Handler(BaseHTTPRequestHandler):
                     "nextIndex": 0, "running": False, "uptime": 0,
                 }))
             return self._json(ok(bot.to_poll(since)))
+        # ---- Bot army-action (军情) ----
+        elif path.startswith("/api/bot/") and path.endswith("/army-action"):
+            parts = path.split("/")
+            aid = int(parts[3])
+            bot = bots.get(aid)
+            if not bot or not bot.running:
+                return self._json(ok({"expeditions": [], "alerts": [], "garrison": []}))
+            try:
+                result = 查询军情(bot.client)
+                return self._json(ok(result))
+            except Exception as e:
+                bot.log(f"[军情] 查询失败: {e}")
+                return self._json(ok({"expeditions": [], "alerts": [], "garrison": []}))
         # ---- Account config ----
         elif path.startswith("/api/account/") and path.endswith("/config"):
             aid = int(path.split("/")[3])
@@ -1565,10 +1579,10 @@ def start(port=8080):
     print("=" * 62)
     print("  帝王三国辅助  v0.5 — 支持启动登录")
     print("=" * 62)
-    print(f"\n  🌐 http://0.0.0.0:{port}")
-    print(f"  🗺️  {len(REGIONS)} 个区服 | 📋 {len(accounts_db)} 个账号")
+    print(f"\n  http://0.0.0.0:{port}")
+    print(f"  {len(REGIONS)} 个区服 | {len(accounts_db)} 个账号")
     print(f"  平台: 繁体版 (fanti_dwsg)")
-    print(f"  🚀 Bot 会话: 启动后可轮询角色信息\n")
+    print(f"  Bot 会话: 启动后可轮询角色信息\n")
     srv.serve_forever()
 
 
