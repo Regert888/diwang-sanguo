@@ -259,6 +259,18 @@ class BotSession:
                         self._治疗伤兵()
                     except Exception as e:
                         self.log(f"[调试] 治疗失败: {e}")
+                # ★ zone1 日常任务（每 6 轮 ≈ 60 秒查一次，内部按天去重）
+                if self._rfc % 6 == 0:
+                    try:
+                        self._日常任务()
+                    except Exception as e:
+                        self.log(f"[调试] 日常任务失败: {e}")
+                # ★ zone2 常规任务（每 6 轮 ≈ 60 秒查一次，持续执行）
+                if self._rfc % 6 == 0:
+                    try:
+                        self._常规任务()
+                    except Exception as e:
+                        self.log(f"[调试] 常规任务失败: {e}")
                 time.sleep(10)
 
         # ★ 防止重复启动：已有存活线程则不再创建
@@ -421,6 +433,52 @@ class BotSession:
         except Exception:
             pass
 
+
+    def _日常任务(self):
+        """zone1 日常任务（签到/俸禄/领奖/捐献…），每天最多成功一次。
+
+        具体任务表在 features/daily.py，新增一类日常只改那里的 TASKS 字典。
+        """
+        if not self.client:
+            return
+        import features.daily as daily
+        today = time.strftime("%Y-%m-%d")
+        cfg = configs_db.get(str(self.acct_id)) or {}
+
+        # UI 勾了但后端还做不了的，启动后提示一次就够，别每分钟刷屏
+        if not getattr(self, "_daily_warned", False):
+            for msg in daily.未支持提示(cfg):
+                self.log("[日常] 暂不支持 —— %s" % msg)
+            self._daily_warned = True
+
+        做完 = daily.执行(self.client, cfg, today, self.log)
+        if not 做完:
+            return
+
+        # 写回 lastRunDate：整份替换而不是就地改，避免与 HTTP 线程读到半截数据
+        with _LOCK:
+            cur = dict(configs_db.get(str(self.acct_id)) or {})
+            rows = [dict(r) if isinstance(r, dict) else r
+                    for r in (cur.get("zone1") or [])]
+            for r in rows:
+                if isinstance(r, dict) and r.get("type") in 做完:
+                    r["lastRunDate"] = today
+            cur["zone1"] = rows
+            configs_db[str(self.acct_id)] = cur
+            save_configs()
+
+    def _常规任务(self):
+        """zone2 常规任务（粮转铜/内政/喊话…），持续执行无每日限制。
+
+        具体任务表在 features/routine.py，新增一类常规只改那里的 TASKS 字典。
+        """
+        if not self.client:
+            return
+        import features.routine as routine
+        cfg = configs_db.get(str(self.acct_id)) or {}
+        character = self.character or {}
+
+        routine.执行(self.client, cfg, character, self.log)
 
     def _山贼锚点序列(self, cx, cy):
         """生成 6×6 锚点坐标，从中心向外一圈圈铺开。
