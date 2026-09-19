@@ -10,11 +10,11 @@ WWW = os.path.join(BASE, "www")
 ASSETS = os.path.join(BASE, "assets")
 sys.path.insert(0, BASE)
 from core.king_client import (
-    取区服列表, 匹配区服, 进入游戏,
-    解析武将列表, 解析宝藏,
-    刷新伤兵, 治疗伤兵,
-    查询军情
+    取区服列表, 匹配区服,
+    解析武将列表,
+    KingClient
 )
+from core.protocol.login import 进入游戏
 
 # ====== 区服列表缓存 ======
 def load_regions():
@@ -126,6 +126,25 @@ class BotSession:
         if len(self.logs) > 300:
             self.logs = self.logs[-300:]
 
+    def _检查功能启用(self, cfg, zone_key, task_type):
+        """检查指定功能是否启用。
+
+        参数:
+            cfg: 账号配置字典
+            zone_key: 配置区域键名（zone3, zone4, zone5等）
+            task_type: 任务类型（ASSIGN_SOLDIER, THIEF, INSTANCE, HEAL等）
+
+        返回:
+            bool: 功能是否启用
+        """
+        zone = cfg.get(zone_key) or []
+        for item in zone:
+            if not isinstance(item, dict):
+                continue
+            if (item.get("type") or task_type) == task_type:
+                return bool(item.get("enabled"))
+        return False
+
     def start(self):
         self.running = True
         self.status = 1
@@ -225,11 +244,16 @@ class BotSession:
                     self.status = 0
 
         def _refresh():
-            """独立刷新线程：所有数据都是动态的，每 10 秒全量刷新 + 自动补兵"""
+            """独立刷新线程：基础心跳 + 按需执行勾选的功能"""
             time.sleep(3)
             while self.running:
                 if not (self.client and self.running):
                     break
+
+                # 获取当前账号配置
+                cfg = configs_db.get(str(self.acct_id)) or {}
+
+                # 基础刷新（必须执行，维持角色在线状态）
                 try:
                     self._rfc = getattr(self, "_rfc", 0) + 1
                     # ★ 首轮立即强制取完整包（不等 120 秒），之后每 12 轮强制一次
@@ -241,37 +265,57 @@ class BotSession:
                     self._全量刷新(强制完整=强制)
                 except Exception as e:
                     self.log(f"[调试] 刷新失败: {e}")
-                try:
-                    self._自动配兵()
-                except Exception as e:
-                    self.log(f"[调试] 自动配兵失败: {e}")
-                try:
-                    self._刷黄()
-                except Exception as e:
-                    self.log(f"[调试] 刷黄失败: {e}")
-                # ★ 伤兵查询 + 自动治疗（每 3 轮执行一次 ≈ 30 秒）
+
+                # 按需执行：配兵功能（zone3）
+                if self._检查功能启用(cfg, "zone3", "ASSIGN_SOLDIER"):
+                    try:
+                        self._自动配兵()
+                    except Exception as e:
+                        self.log(f"[调试] 自动配兵失败: {e}")
+
+                # 按需执行：刷黄功能（zone3）
+                if self._检查功能启用(cfg, "zone3", "THIEF"):
+                    try:
+                        self._刷黄()
+                    except Exception as e:
+                        self.log(f"[调试] 刷黄失败: {e}")
+
+                # 按需执行：副本功能（zone3）
+                if self._检查功能启用(cfg, "zone3", "DUNGEON"):
+                    try:
+                        self._打副本()
+                    except Exception as e:
+                        self.log(f"[调试] 打副本失败: {e}")
+
+                # 按需执行：伤兵查询 + 治疗（每 3 轮执行一次 ≈ 30 秒）
                 if self._rfc % 3 == 0:
                     try:
                         self._查伤兵()
                         self._同步部队到前端()
                     except Exception as e:
                         self.log(f"[调试] 查伤兵失败: {e}")
-                    try:
-                        self._治疗伤兵()
-                    except Exception as e:
-                        self.log(f"[调试] 治疗失败: {e}")
-                # ★ zone1 日常任务（每 6 轮 ≈ 60 秒查一次，内部按天去重）
-                if self._rfc % 6 == 0:
+
+                    # 治疗功能需要单独配置启用
+                    if self._检查功能启用(cfg, "zone5", "HEAL"):
+                        try:
+                            self._治疗伤兵()
+                        except Exception as e:
+                            self.log(f"[调试] 治疗失败: {e}")
+
+                # 按需执行：zone1 日常任务（每 6 轮 ≈ 60 秒查一次）
+                if self._rfc % 6 == 0 and (cfg.get("zone1") or []):
                     try:
                         self._日常任务()
                     except Exception as e:
                         self.log(f"[调试] 日常任务失败: {e}")
-                # ★ zone2 常规任务（每 6 轮 ≈ 60 秒查一次，持续执行）
-                if self._rfc % 6 == 0:
+
+                # 按需执行：zone2 常规任务（每 6 轮 ≈ 60 秒查一次）
+                if self._rfc % 6 == 0 and (cfg.get("zone2") or []):
                     try:
                         self._常规任务()
                     except Exception as e:
                         self.log(f"[调试] 常规任务失败: {e}")
+
                 time.sleep(10)
 
         # ★ 防止重复启动：已有存活线程则不再创建
@@ -391,6 +435,12 @@ class BotSession:
         import features.thief as thief
         cfg = configs_db.get(str(self.acct_id)) or {}
         thief.执行(self, cfg)
+
+    def _打副本(self):
+        """副本板块 → features/dungeon.py（2026-09-18 新增）"""
+        import features.dungeon as dungeon
+        cfg = configs_db.get(str(self.acct_id)) or {}
+        dungeon.执行(self, cfg)
 
 
     def 配兵(self, 任务列表):
@@ -577,70 +627,40 @@ class BotSession:
                 ok = True
         except Exception as e:
             self.log(f"[调试] 伤兵查询失败: {e}")
+        # 6) 军情（行军/返回/战斗状态）
+        try:
+            from core.king_client import 查询军情
+            军情 = 查询军情(self.client)
+            if 军情 and 军情.get("expeditions"):
+                self._军情列表 = 军情["expeditions"]
+                # 根据军情更新武将状态文本
+                for exp in self._军情列表:
+                    msg = exp.get("message", "")
+                    status = exp.get("status", "")
+                    # 从消息提取武将名（格式：【动作】武将名...）
+                    import re
+                    m = re.search(r"【[^】]+】(.+?)(?:消滅|返回|到達)", msg)
+                    if m:
+                        名字 = m.group(1).strip()
+                        for g in self.generals:
+                            if g.get("name") == 名字:
+                                g["statusText"] = status
+                                break
+        except Exception as e:
+            self.log(f"[调试] 军情查询失败: {e}")
         self._lastRefresh = time.time()
         return ok
 
     def _建武将(self, raw, charName=""):
-        """原始 A4 数据 → 前端英雄表结构"""
-        gens = []
-        for g in raw:
-            nm = g.get("name", "")
-            将类 = {0: "步", 1: "弓", 2: "骑", 4: "勇"}.get(g.get("ga"), "—")
-            # 兵种/数量来自 解析部队（真实数据）
-            sid, scnt = self._部队表.get(g.get("genId"), (None, 0))
-            gens.append({
-                "genId": g.get("genId", 0),
-                "name": nm,
-                "statusText": {0: "待命", 1: "行军中", 8: "返回中"}.get(
-                    g.get("Oa"), ("状态%s" % g.get("Oa")) if g.get("Oa") else "—"),
-                "typeText": 将类,
-                "level": int(g.get("ja", 1) or 1),
-                "curHp": int(g.get("ra", 0) or 0),       # ★ ra=体力（A4 真值验证）
-                "maxHp": int(g.get("sa", 0) or 0),        # sa=体力上限
-                "curLoyalty": int(g.get("wa", 0) or 0),    # ★ wa=忠诚（A4 真值验证）
-                "maxLoyalty": 100,
-                "soldierCount": int(scnt or 0),
-                "curTroops": int(scnt or 0),
-                "maxTroops": int(scnt or 0),
-                "soldierName": (self._兵种名表 or {}).get(str(sid), "—") if sid else "—",
-            })
-        return gens
+        """原始 A4 数据 → 前端英雄表结构（已迁移到 app.presenters）"""
+        from app.presenters import build_generals
+        return build_generals(raw, self._部队表, self._兵种名表)
 
     def _建部队(self, gens, charName=""):
-        """封地 → 军队表结构（显示每个封地的闲兵和伤兵）"""
+        """封地 → 军队表结构（已迁移到 app.presenters）"""
+        from app.presenters import build_troops
         伤兵表 = getattr(self, "_伤兵表", {})
-        out = []
-
-        # 伤兵表结构：{封地名: {"闲兵": [(seq,cnt),...], "伤兵": [(seq,cnt),...]}}
-        for idx, (fief_name, data) in enumerate(伤兵表.items()):
-            闲兵列表 = data.get("闲兵", [])
-            伤兵列表 = data.get("伤兵", [])
-
-            # 按兵种分组显示（每个兵种一行）
-            兵种汇总 = {}  # {seq: {"闲兵": cnt, "伤兵": cnt}}
-            for seq, cnt in 闲兵列表:
-                if seq not in 兵种汇总:
-                    兵种汇总[seq] = {"闲兵": 0, "伤兵": 0}
-                兵种汇总[seq]["闲兵"] = cnt
-
-            for seq, cnt in 伤兵列表:
-                if seq not in 兵种汇总:
-                    兵种汇总[seq] = {"闲兵": 0, "伤兵": 0}
-                兵种汇总[seq]["伤兵"] = cnt
-
-            # 每个兵种一行
-            for seq, counts in 兵种汇总.items():
-                soldier_name = (self._兵种名表 or {}).get(str(seq), f"兵种{seq}")
-                out.append({
-                    "fiefIndex": idx + 1,
-                    "soldierName": soldier_name,
-                    "idleCount": counts["闲兵"],
-                    "woundedCount": counts["伤兵"],
-                    "fiefName": fief_name,
-                    "genId": 0,  # 封地没有武将ID
-                })
-
-        return out
+        return build_troops(伤兵表, self._兵种名表)
 
     def _查伤兵(self):
         """转发到 features/heal.py"""
@@ -677,6 +697,8 @@ class BotSession:
         try: since = max(0, int(since))
         except: since = 0
         new_logs = self.logs[since:] if since < len(self.logs) else []
+        # 军情列表（新增字段）
+        军情 = getattr(self, "_军情列表", [])
         return {
             "status": self.status,
             "lastError": self.last_error,
@@ -690,9 +712,7 @@ class BotSession:
             "roleStatuses": getattr(self, "roleStatuses", []),
             "roleStatusList": getattr(self, "roleStatuses", []),
             "convoyCountries": [],
-            "logs": new_logs,
-            "total": len(self.logs),
-            "nextIndex": len(self.logs),
+            "expeditions": 军情,  # ★ 新增：军情列表
             "logs": new_logs,
             "total": len(self.logs),
             "nextIndex": len(self.logs),
@@ -853,13 +873,9 @@ class Handler(BaseHTTPRequestHandler):
             aid = int(parts[3])
             bot = bots.get(aid)
             if not bot or not bot.running:
-                return self._json(ok({"expeditions": [], "alerts": [], "garrison": []}))
-            try:
-                result = 查询军情(bot.client)
-                return self._json(ok(result))
-            except Exception as e:
-                bot.log(f"[军情] 查询失败: {e}")
-                return self._json(ok({"expeditions": [], "alerts": [], "garrison": []}))
+                return self._json(ok(None))
+            # 返回 features/army_action.py 填充的解析结果
+            return self._json(ok(getattr(bot, "_army_action", None)))
         # ---- Account config ----
         elif path.startswith("/api/account/") and path.endswith("/config"):
             aid = int(path.split("/")[3])
@@ -1124,56 +1140,28 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 bot.log(f"[调试] 状态拉取失败: {e}")
 
-            # 从登录包解析武将
+            # 从登录包解析武将 → 使用统一的 presenter
             try:
                 login_pk = c.login_packets
                 if login_pk:
-                    from core.king_client import 解析登录包武将
+                    from core.king_client import 解析武将列表
                     pk_data = None
                     for p in login_pk:
                         if p.get('op') == 32772:
                             pk_data = p['data']; break
                     if pk_data:
-                        from core.king_client import 解析武将列表
                         raw = 解析武将列表(pk_data)
-                        gens = []
-                        for g in raw:
-                            nm = g.get("name", "")
-                            # 兵种：DEX 数组验证 —— 1=弓 2=骑 3=步 4=勇
-                            # 将类：0步 1弓 2骑 4勇（真值验证）
-                            将类 = {0: "步", 1: "弓", 2: "骑", 4: "勇"}.get(g.get("ga"), "—")
-                            # 兵种：按武将类别对应（步兵/弓兵/骑兵/勇兵）
-                            兵种 = {0: "步兵", 1: "弓兵", 2: "骑兵", 4: "勇兵"}.get(g.get("ga"), "—")
-                            gens.append({
-                                "genId": g.get("genId", 0),
-                                "name": nm,
-                                # 状态码 Oa（真值验证）：0=待命 1=行军中 8=返回中
-                                "statusText": {0: "待命", 1: "行军中", 8: "返回中"}.get(
-                                    g.get("Oa"),
-                                    ("状态%d" % g.get("Oa")) if g.get("Oa") else "—"),
-                                "typeText": 将类,
-                                "level": int(g.get("ja", 1) or 1),   # ja=等级（已验证）
-                                # 已用真值验证：体力=ra, 忠诚=wa, 统兵=troops
-                                "curHp": int(g.get("hp", 0) or 0),
-                                "maxHp": int(g.get("sa", 0) or 0),
-                                "curLoyalty": int(g.get("loyalty", 0) or 0),
-                                "maxLoyalty": 100,
-                                "soldierCount": int(g.get("troops", 0) or 0),
-                                "curTroops": int(g.get("troops", 0) or 0),
-                                "maxTroops": int(g.get("troops", 0) or 0),
-                                "soldierName": 兵种,
-                                "_raw": {k: v for k, v in g.items()
-                                         if k not in ("genId", "name")},
-                            })
-                        if gens:
-                            bot.generals = gens
+                        if raw:
+                            # ★ 使用 _建武将 统一构建（修复 Bug 4）
+                            bot.generals = bot._建武将(raw)
                             # 军队 tab：走 _建部队 以包含伤兵数据
                             try:
                                 bot._查伤兵()
                             except Exception:
                                 pass
-                            bot.troops = bot._建部队(gens, bot.character.get("charName", ""))
-                            bot.log("解析到 %d 支部队" % len(bot.troops))
+                            bot.troops = bot._建部队(bot.generals, bot.character.get("charName", ""))
+                            bot.log("解析到 %d 个武将: %s" % (
+                                len(bot.generals), " ".join(g["name"] for g in bot.generals)))
 
                         # 宝物 tab：op 4356 + 本地物品名表
                         try:
@@ -1194,10 +1182,6 @@ class Handler(BaseHTTPRequestHandler):
                             bot.log("解析到 %d 种宝物" % len(it))
                         except Exception as _e:
                             bot.log("[调试] 宝物解析失败: %s" % _e)
-                            bot.log("解析到 %d 个武将: %s" % (
-                                len(gens), " ".join(g["name"] for g in gens)))
-                            for g in gens:
-                                bot.log("  原始字段: %s" % g["_raw"])
             except Exception as e:
                 bot.log(f"[调试] 武将解析: {e}")
 
