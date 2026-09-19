@@ -29,7 +29,7 @@ class KingClient:
     如果混用会导致：配兵/出征/副本扫荡 **无声失效**（服务端不报错，但也不执行）。
     """
 
-    def __init__(self, username: str, password: str, zone_name: str = ""):
+    def __init__(self, username: str = "", password: str = "", zone_name: str = ""):
         self.username = username
         self.password = password
         self.zone_name = zone_name

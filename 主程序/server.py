@@ -102,12 +102,19 @@ class BotSession:
         self.start_time = 0
         self.logs = []                        # 字符串数组（前端 rn() 直接 push 显示）
         self.character = {}                   # 角色面板数据
-        self.generals = []
-        self.troops = []
-        self._部队表 = {}
+        # ★ 删除缓存状态：self.generals 和 self.troops 改为 @property 实时投影
+        self._武将原始A4 = []                 # ★ 原子数据：op 4368 A4 原始响应
+        self._部队表 = {}                     # ★ 原子数据：{武将ID: (兵种seq, 数量)}
+        self._伤兵表 = {}                     # ★ 原子数据：{封地ID: {"woundedCount","idleCount","soldierSeq"}}
         self._pb_last = {}                    # 自动配兵冷却（武将ID → 上次时间）
+
         self._pb_dead = 0                     # 自动配兵连续无应答次数（≥3 暂停）
         self._eg_last = 0                     # 上次 enter_game 时间（60秒冷却）
+        self.officers = []
+        self.role_statuses = []
+        self.role_status_list = []
+        self.convoy_countries = []
+        self.tasks = []
         self.items = []
         try:
             import json as _json
@@ -120,6 +127,19 @@ class BotSession:
         self._lastRefresh = 0
         self._物品名表 = None
         self._hb_thread = None
+
+    @property
+    def generals(self):
+        """实时投影：_武将原始A4 × _部队表 × _兵种名表 → 前端格式"""
+        from app.presenters import build_generals
+        return build_generals(self._武将原始A4, self._部队表, self._兵种名表)
+
+    @property
+    def troops(self):
+        """实时投影：_伤兵表 × _兵种名表 → 前端格式"""
+        from app.presenters import build_troops
+        伤兵表 = getattr(self, "_伤兵表", {})
+        return build_troops(伤兵表, self._兵种名表)
 
     def log(self, msg):
         self.logs.append(f"[{time.strftime('%H:%M:%S')}] {msg}")
@@ -291,7 +311,6 @@ class BotSession:
                 if self._rfc % 3 == 0:
                     try:
                         self._查伤兵()
-                        self._同步部队到前端()
                     except Exception as e:
                         self.log(f"[调试] 查伤兵失败: {e}")
 
@@ -361,27 +380,6 @@ class BotSession:
         import features.military as military
         cfg = configs_db.get(str(self.acct_id)) or {}
         military.自动配兵(self, cfg, 兵种seq)
-
-    def _同步部队到前端(self):
-        """把 _部队表 的变化同步回 generals/troops（增量包不刷新时也能立即看到）"""
-        try:
-            nm = self.character.get("charName", "")
-            for g in self.generals:
-                t2 = self._部队表.get(g.get("genId"))
-                if t2:
-                    g["soldierCount"] = t2[1]
-                    g["curTroops"] = t2[1]
-                    try:
-                        g["soldierName"] = self._兵种名表.get(str(t2[0]), "—")
-                    except Exception:
-                        g["soldierName"] = "—"
-                elif g.get("soldierCount"):
-                    g["soldierCount"] = 0
-                    g["curTroops"] = 0
-                    g["soldierName"] = "—"
-            self.troops = self._建部队(self.generals, nm)
-        except Exception:
-            pass
 
 
     def _日常任务(self):
@@ -477,7 +475,6 @@ class BotSession:
                     self._部队表[t["genId"]] = (r.get("newSeq") or t["seq"], r["newCount"])
                 else:
                     self._部队表.pop(t["genId"], None)
-                self._同步部队到前端()
                 self.log("配兵成功: 武将%s 兵种%s %s→%s" % (
                     t["genId"], t["seq"], r.get("oldCount"), r.get("newCount")))
             else:
@@ -577,9 +574,7 @@ class BotSession:
                     from core.king_client import 解析部队
                     gids = {g["genId"] for g in raw}
                     self._部队表 = 解析部队(d, gids)
-                    nm = self.character.get("charName", "")
-                    self.generals = self._建武将(raw, nm)
-                    self.troops = self._建部队(self.generals, nm)
+                    self._武将原始A4 = raw  # ★ 保存原始数据
                     ok = True
                     self._实时包 = d
                     self._实时包时间 = time.time()
@@ -622,8 +617,7 @@ class BotSession:
             伤兵字典 = 刷新伤兵(self.client)
             if 伤兵字典:
                 self._伤兵表 = 伤兵字典
-                # 重建 troops（伤兵数据刚更新，需要重新构建）
-                self.troops = self._建部队(self.generals, self.character.get("charName", ""))
+                # ★ 投影架构：删除手动赋值，troops 现在是 @property 实时计算
                 ok = True
         except Exception as e:
             self.log(f"[调试] 伤兵查询失败: {e}")
@@ -651,16 +645,6 @@ class BotSession:
         self._lastRefresh = time.time()
         return ok
 
-    def _建武将(self, raw, charName=""):
-        """原始 A4 数据 → 前端英雄表结构（已迁移到 app.presenters）"""
-        from app.presenters import build_generals
-        return build_generals(raw, self._部队表, self._兵种名表)
-
-    def _建部队(self, gens, charName=""):
-        """封地 → 军队表结构（已迁移到 app.presenters）"""
-        from app.presenters import build_troops
-        伤兵表 = getattr(self, "_伤兵表", {})
-        return build_troops(伤兵表, self._兵种名表)
 
     def _查伤兵(self):
         """转发到 features/heal.py"""
@@ -673,24 +657,6 @@ class BotSession:
         cfg = configs_db.get(str(self.acct_id)) or {}
         heal.治疗伤兵(self, cfg)
 
-    def _刷新武将(self):
-        """op 4368 实时包 → 刷新武将/部队（无需重新登录）"""
-        pk = self.client.send_op(4368, b"")
-        dd = None
-        for p in pk or []:
-            if p["op"] - 28672 == 4368 and p.get("data"):
-                dd = p["data"]
-                break
-        if not dd:
-            return False
-        from core.king_client import 解析武将列表
-        raw = 解析武将列表(dd)
-        if not raw:
-            return False
-        gens = self._建武将(raw, self.character.get("charName", ""))
-        self.generals = gens
-        self.troops = self._建部队(gens, self.character.get("charName", ""))
-        return True
 
     def to_poll(self, since=0):
         """商辅前端 wdApplyRuntimeData() / rn() 期望的结构"""
@@ -1110,7 +1076,29 @@ class Handler(BaseHTTPRequestHandler):
             bot.log(f"目标区服：{srv_name}（{host}:{port}）")
 
             bot.log("正在进入游戏…")
-            c, msg = 进入游戏(user, pwd, host, port, session, sub)
+            # 创建客户端并设置连接参数
+            c = KingClient()
+            c.game_url = f"http://{host}:{port}/game"
+            c.session = session
+            c.sub_token = sub
+            c.play_id = 0  # ★ 先设为 0，enter_game 后会从响应包提取真实值
+
+            try:
+                # 进入游戏（op 4096）
+                from core.protocol.login import enter_game, game_login
+                pk_enter = enter_game(c)
+                # 从响应包提取 play_id
+                if pk_enter:
+                    c.play_id = pk_enter[0].get("play", 0)
+                if not c.play_id:
+                    raise Exception("未获取到 play_id")
+
+                # 登录游戏（op 4100）
+                pk_login = game_login(c, role_index=0)
+                c.login_packets = pk_login  # ★ 保存登录包供后续解析武将
+                msg = None
+            except Exception as e:
+                c, msg = None, str(e)
             if not c:
                 return _err(msg or "进入游戏失败")
             bot.client = c
@@ -1152,14 +1140,13 @@ class Handler(BaseHTTPRequestHandler):
                     if pk_data:
                         raw = 解析武将列表(pk_data)
                         if raw:
-                            # ★ 使用 _建武将 统一构建（修复 Bug 4）
-                            bot.generals = bot._建武将(raw)
-                            # 军队 tab：走 _建部队 以包含伤兵数据
+                            # ★ 保存原子数据（投影架构）
+                            bot._武将原始A4 = raw
+                            # 军队 tab：拉取伤兵数据到 _伤兵表
                             try:
                                 bot._查伤兵()
                             except Exception:
                                 pass
-                            bot.troops = bot._建部队(bot.generals, bot.character.get("charName", ""))
                             bot.log("解析到 %d 个武将: %s" % (
                                 len(bot.generals), " ".join(g["name"] for g in bot.generals)))
 
