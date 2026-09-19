@@ -17,3 +17,8 @@ tmp/
 *.apk
 apk_work/
 登录到山贼筛选借鉴代码.py
+
+# 运行时数据（db_manager 自动生成）
+主程序/data/
+主程序/*.bak
+主程序/features/*.bak

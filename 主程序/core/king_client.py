@@ -11,6 +11,7 @@ import time
 import hmac
 import hashlib
 import struct
+import base64
 import requests
 import random
 from typing import List, Tuple, Optional, Dict, Any
@@ -39,10 +40,12 @@ class KingClient:
         self.role_id = 0
         self.session_id = ""
         self.http_session = requests.Session()
+        # ★ 对齐真机抓包（军情1.har）：Content-Type 必须是 form-urlencoded
         self.http_session.headers.update({
-            "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 9; MI 8 MIUI/V12.5.3.0.PEAMIXM)",
-            "Content-Type": "application/octet-stream",
-            "Connection": "Keep-Alive",
+            "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 12; V2366GA Build/02c7e77.0)",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "*/*",
+            "Connection": "Close",
         })
 
         # 地图尺寸（刷黄锚点生成需要）
@@ -84,8 +87,8 @@ class KingClient:
 
         try:
             resp = self.http_session.post(
-                f"{LOGIN_URL}/game",
-                data=header + payload,
+                self.game_url,
+                data=base64.b64encode(header + payload),
                 timeout=10
             )
             if resp.status_code != 200:
@@ -115,8 +118,8 @@ class KingClient:
 
         try:
             resp = self.http_session.post(
-                f"{LOGIN_URL}/game",
-                data=header + payload,
+                self.game_url,
+                data=base64.b64encode(header + payload),
                 timeout=10
             )
             if resp.status_code != 200:
@@ -144,8 +147,17 @@ class KingClient:
             sig = md5_sign(op, cur, play_id)
             body += _wlong(play_id) + _wlong(0) + _wshort(len(data)) + _wshort(op) + _wutf(sig) + data
 
-        req = urllib.request.Request(self.game_url, data=body, method="POST")
-        req.add_header("Content-Type", "application/octet-stream")
+        # ★ 真机抓包（军情1.har）确认：请求体是 base64 文本，不是原始二进制。
+        #   发 raw bytes 会被网关拒绝（502 Bad Gateway）。
+        encoded = base64.b64encode(body)
+
+        req = urllib.request.Request(self.game_url, data=encoded, method="POST")
+        # ★ 头部对齐真机抓包 —— 服务端对 Content-Type 敏感
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        req.add_header("User-Agent",
+                       "Dalvik/2.1.0 (Linux; U; Android 12; V2366GA Build/02c7e77.0)")
+        req.add_header("Accept", "*/*")
+        req.add_header("Connection", "Close")
         with urllib.request.urlopen(req, timeout=20) as r:
             return r.read()
 
@@ -203,7 +215,7 @@ class KingClient:
 
         self.game_host = host
         self.game_port = port
-        self.game_url = f"http://{host}:{port}/game"
+        self.game_url = f"http://{host}:{port}/kingWapServer/HttpClient"
         return name, host, port
 
     def login(self, zone_name: str = None, zone_index: int = 0, role_index: int = 0):
@@ -297,37 +309,11 @@ __all__ = [
     "解析配兵应答", "解析部队实时", "格式化部队",
     "解析山贼应答", "格式化山贼",
     "解析副本应答",
-    "配兵", "扫描山贼", "出征打山贼", "扫描副本", "出征打副本",
+    "扫描副本", "出征打副本",
 ]
 
 
-# ============ 便捷封装函数 ============
-
-def 配兵(client, 武将ID, 兵种seq, 数量):
-    """op 4646 配兵"""
-    payload = struct.pack(">IHI", int(武将ID), int(兵种seq), int(数量))
-    return client.send_ops_raw([(4646, payload)])
-
-
-def 扫描山贼(client, anchors):
-    """op 5440 扫描山贼（一次一个锚点）"""
-    from .protocol.thief import 解析山贼应答
-    out = {}
-    for x, y in anchors:
-        payload = struct.pack(">BHH", 0, int(x), int(y))
-        pk = client.send_ops_raw([(5440, payload)])
-        thieves = 解析山贼应答(pk)
-        out.update(thieves)
-    return out
-
-
-def 出征打山贼(client, 武将ID列表, 山贼ID):
-    """op 5410 出征打山贼"""
-    cnt = len(武将ID列表)
-    fmt = ">BI" + "I" * cnt
-    payload = struct.pack(fmt, cnt, int(山贼ID), *[int(g) for g in 武将ID列表])
-    return client.send_ops_raw([(5410, payload)])
-
+# ============ 便捷封装函数（副本，未经真机抓包验证）============
 
 def 扫描副本(client, anchors):
     """op 5442 扫描副本（与山贼同构）"""

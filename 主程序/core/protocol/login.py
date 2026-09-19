@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """登录协议（从借鉴代码迁移）"""
+import re
 import struct
 import urllib.request
 from .packets import _wutf, _wlong, _wbyte, _wshort, LOGIN_URL, VALIDATE_URL, CHANNEL_ID, C_VERSION, C_TYPE, TARGET_ALL
@@ -46,16 +47,48 @@ def 取区服列表(user, pwd):
     return session, sub_token, areas
 
 
+def _归一(s):
+    """区服标识归一化：去 hk_ 前缀、统一繁简「区」、去首尾空白。"""
+    s = str(s or "").strip()
+    if s.lower().startswith("hk_"):
+        s = s[3:]
+    return s.replace("區", "区")
+
+
 def 匹配区服(areas, area_key):
-    """按区服号/名字模糊匹配，例如 '328' 匹配 '328区'"""
-    key = str(area_key).strip().replace("区", "").replace("區", "")
-    for name, host, port in areas:
-        n = name.replace("区", "").replace("區", "")
-        if n == key:
+    """按区服号/名字匹配，返回 (name, host, port) 或 None。
+
+    ★ 实测数据形态（accounts.json vs 服务端列表）：
+        serverKey 'hk_328'     ↔ 区服名 '328區豪情逸致'    —— 号在开头
+        serverKey 'hk_霸圖19'  ↔ 区服名 '霸圖19區'         —— 号在中间
+      所以不能整串比，要先剥 hk_ 前缀，再按区服号定位。
+
+    ★ 列表里有重复项（同一区服多条记录），取第一条即可。
+    """
+    key = _归一(area_key)
+    if not key:
+        return None
+
+    归一表 = [(_归一(n), n, h, p) for n, h, p in areas]
+
+    # 1) 完全相同
+    for n归一, name, host, port in 归一表:
+        if n归一 == key:
             return name, host, port
-    for name, host, port in areas:
-        if key and key in name:
+
+    # 2) 区服号开头匹配 —— '328' 命中 '328区豪情逸致'，但不会命中 '1328区'
+    m = re.match(r"^(\d+)", key)
+    if m:
+        num = m.group(1)
+        for n归一, name, host, port in 归一表:
+            if re.match(r"^%s(?!\d)" % num, n归一):
+                return name, host, port
+
+    # 3) 子串包含 —— '霸图19' 命中 '霸图19区'
+    for n归一, name, host, port in 归一表:
+        if key in n归一:
             return name, host, port
+
     return None
 
 
