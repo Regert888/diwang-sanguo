@@ -128,6 +128,13 @@ class BotSession:
         self._物品名表 = None
         self._hb_thread = None
 
+        # ★ 第 6 步：插件化任务系统
+        from app.feature import Cooldowns, Bus
+        self._cooldowns = Cooldowns(ttl=900)    # 冷却管理器
+        self._bus = Bus()                        # 事件总线
+        self._scheduler = None                   # Scheduler 实例
+        self._rf_thread = None                   # 刷新线程（用于 stop）
+
     @property
     def generals(self):
         """实时投影：_武将原始A4 × _部队表 × _兵种名表 → 前端格式"""
@@ -172,10 +179,17 @@ class BotSession:
         self.last_access = time.strftime("%Y-%m-%d %H:%M:%S")
         self._start_heartbeat()
 
+        # ★ 第 6 步：启动 Scheduler 调度器
+        self._start_scheduler()
+
     def stop(self):
         self.running = False
         self.status = 0
         self._stopped_at = time.time()
+
+        # ★ 停止 Scheduler（响应延迟从 10s → 1s）
+        if hasattr(self, "_scheduler"):
+            self._scheduler.stop()
 
     def _刷新角色(self):
         """重新拉取角色面板数据"""
@@ -264,78 +278,16 @@ class BotSession:
                     self.status = 0
 
         def _refresh():
-            """独立刷新线程：基础心跳 + 按需执行勾选的功能"""
+            """独立刷新线程：Scheduler 统一调度"""
+            from app.scheduler import Scheduler
+            from features import REGISTRY
+
             time.sleep(3)
-            while self.running:
-                if not (self.client and self.running):
-                    break
-
-                # 获取当前账号配置
-                cfg = configs_db.get(str(self.acct_id)) or {}
-
-                # 基础刷新（必须执行，维持角色在线状态）
-                try:
-                    self._rfc = getattr(self, "_rfc", 0) + 1
-                    # ★ 首轮立即强制取完整包（不等 120 秒），之后每 12 轮强制一次
-                    强制 = (self._rfc == 1 or self._rfc % 12 == 0)
-                    # ★ 出征/配兵后 4 秒强制完整刷新（同步武将状态）
-                    if time.time() >= getattr(self, "_force_full_at", 0) > 0:
-                        self._force_full_at = 0
-                        强制 = True
-                    self._全量刷新(强制完整=强制)
-                except Exception as e:
-                    self.log(f"[调试] 刷新失败: {e}")
-
-                # 按需执行：配兵功能（zone3）
-                if self._检查功能启用(cfg, "zone3", "ASSIGN_SOLDIER"):
-                    try:
-                        self._自动配兵()
-                    except Exception as e:
-                        self.log(f"[调试] 自动配兵失败: {e}")
-
-                # 按需执行：刷黄功能（zone3）
-                if self._检查功能启用(cfg, "zone3", "THIEF"):
-                    try:
-                        self._刷黄()
-                    except Exception as e:
-                        self.log(f"[调试] 刷黄失败: {e}")
-
-                # 按需执行：副本功能（zone3）
-                if self._检查功能启用(cfg, "zone3", "DUNGEON"):
-                    try:
-                        self._打副本()
-                    except Exception as e:
-                        self.log(f"[调试] 打副本失败: {e}")
-
-                # 按需执行：伤兵查询 + 治疗（每 3 轮执行一次 ≈ 30 秒）
-                if self._rfc % 3 == 0:
-                    try:
-                        self._查伤兵()
-                    except Exception as e:
-                        self.log(f"[调试] 查伤兵失败: {e}")
-
-                    # 治疗功能需要单独配置启用
-                    if self._检查功能启用(cfg, "zone5", "HEAL"):
-                        try:
-                            self._治疗伤兵()
-                        except Exception as e:
-                            self.log(f"[调试] 治疗失败: {e}")
-
-                # 按需执行：zone1 日常任务（每 6 轮 ≈ 60 秒查一次）
-                if self._rfc % 6 == 0 and (cfg.get("zone1") or []):
-                    try:
-                        self._日常任务()
-                    except Exception as e:
-                        self.log(f"[调试] 日常任务失败: {e}")
-
-                # 按需执行：zone2 常规任务（每 6 轮 ≈ 60 秒查一次）
-                if self._rfc % 6 == 0 and (cfg.get("zone2") or []):
-                    try:
-                        self._常规任务()
-                    except Exception as e:
-                        self.log(f"[调试] 常规任务失败: {e}")
-
-                time.sleep(10)
+            # ★ 创建 Scheduler 实例（每个 BotSession 独立）
+            # 每个 Feature 类实例化，避免共享状态（Bug 3）
+            features = [cls() for cls in REGISTRY]
+            self._scheduler = Scheduler(self, features)
+            self._scheduler.tick()  # 阻塞运行，直到 self.running = False
 
         # ★ 防止重复启动：已有存活线程则不再创建
         if getattr(self, "_hb_thread", None) is not None and self._hb_thread.is_alive():
@@ -347,6 +299,12 @@ class BotSession:
         r = threading.Thread(target=_refresh, daemon=True)
         self._rf_thread = r
         r.start()
+
+    def _start_scheduler(self):
+        """启动调度器（已在 _start_heartbeat 的 _refresh 线程中完成）"""
+        # 实际启动逻辑在 _start_heartbeat() 的 _refresh() 函数中
+        # 这个方法只是为了语义清晰，实际不需要做额外操作
+        pass
 
     # ==================== 配兵（按商辅规则） ====================
     # 商辅规则（逆自前端说明文字）：
